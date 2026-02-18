@@ -36,6 +36,7 @@ DEFAULT_CONFIG = {
 
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
+    "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "auto_copy": False,
 }
 

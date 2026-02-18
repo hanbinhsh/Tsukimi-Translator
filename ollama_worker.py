@@ -112,23 +112,27 @@ class OllamaTranslator:
         """
         解析 deepseek-ocr grounding 格式：
             <|ref|>text<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>
-            实际文本内容
 
-        坐标约定：deepseek 系列通常输出 0-1000 归一化坐标。
+        兼容两种输出：
+          1) 文本在 <|ref|> 标签内（deepseek-ocr 常见）
+          2) 文本在 det 行后续普通文本中（部分变体）
         返回：[{"text": str, "bbox": [x1, y1, x2, y2]}, ...]
         """
         import re
+
         results = []
         pattern = re.compile(
-            r'<\|ref\|>.*?<\|/ref\|>'          # <|ref|>text<|/ref|>
-            r'<\|det\|>\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]<\|/det\|>'  # bbox
-            r'\n(.+?)(?=\n<\|ref\|>|$)',        # 文本到下一块或结尾
+            r'<\|ref\|>(.*?)<\|/ref\|>\s*'
+            r'<\|det\|>\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]<\|/det\|>'
+            r'(?:\n([^\n<].*?))?(?=\n<\|ref\|>|$)',
             re.DOTALL
         )
         for m in pattern.finditer(raw):
-            x1, y1, x2, y2 = (int(m.group(1)), int(m.group(2)),
-                               int(m.group(3)), int(m.group(4)))
-            text = m.group(5).strip()
+            x1, y1, x2, y2 = (int(m.group(2)), int(m.group(3)),
+                              int(m.group(4)), int(m.group(5)))
+            ref_text = (m.group(1) or '').strip()
+            tail_text = (m.group(6) or '').strip()
+            text = ref_text if ref_text else tail_text
             if text:
                 results.append({"text": text, "bbox": [x1, y1, x2, y2]})
         return results
