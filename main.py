@@ -693,12 +693,26 @@ class SubtitleOverlay(QWidget):
 
     # ── 截图主流程 ──
 
+    def _reset_text_overlay_before_capture(self):
+        """
+        下一次截图前先清掉旧贴字浮层，避免模型反复识别自己上一次贴出来的文本。
+        """
+        if self.text_overlay and isValid(self.text_overlay):
+            self.text_overlay.clear_items()
+            self.text_overlay.close()
+            self.text_overlay = None
+            QApplication.processEvents()
+
     def capture_task(self):
         if self.is_processing: return
         if not self.cfg.get("window_visible", True): return
 
         step1_start = time.perf_counter()
         try:
+            # 贴字模式下，截图前先移除已有贴字窗口，防止出现循环识别
+            if self.cfg.get("use_overlay_ocr", False):
+                self._reset_text_overlay_before_capture()
+
             was_visible = self.isVisible()
             should_hide = self.cfg.get("auto_hide", True)
             if should_hide and was_visible:
