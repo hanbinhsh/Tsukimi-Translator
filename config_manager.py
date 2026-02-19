@@ -57,8 +57,11 @@ DEFAULT_CONFIG = {
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
     "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "save_debug_images": False,         # 是否输出调试截图文件
+<<<<<<< codex/add-debug-settings-and-console-log-tabs-urzpdt
     "log_ocr_raw": False,               # 控制台打印 OCR 原始返回
     "log_ocr_text": False,              # 控制台打印 OCR 输出全文
+=======
+>>>>>>> main
     "dev_tabs_unlocked": False,         # 关于页输入 ice 后解锁调试页/日志页
     "auto_copy": False,
 }
