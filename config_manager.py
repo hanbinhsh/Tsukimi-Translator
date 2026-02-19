@@ -38,6 +38,9 @@ DEFAULT_CONFIG = {
     "ocr_color": "#FFFF88",         # OCR 原文颜色
     "trans_color": "#FFFFFF",       # 译文颜色
     "overlay_min_box_height": 28,    # 贴字文本框最小高度
+    "overlay_auto_merge_lines": False, # 自动识别换行并拼接
+    "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
+    "overlay_joiner": " ",           # 拼接字符（中日文可设为空）
 
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
