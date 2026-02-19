@@ -2148,7 +2148,7 @@ class RuleGroupEditorDialog(QDialog):
         cb.setText("")
         cb.setChecked(checked)
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
+        
         wrap_layout.addWidget(cb)
         wrap_layout.addStretch(1)
         return wrap, cb
@@ -2417,7 +2417,7 @@ class RuleSettingInterface(ScrollArea):
         cb.setText("")
         cb.setChecked(checked)
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
+        
         wrap_layout.addWidget(cb)
         wrap_layout.addStretch(1)
         return wrap, cb
