@@ -1612,6 +1612,7 @@ class DebugSettingInterface(ScrollArea):
 
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet("background: transparent; border: none;")
 
 
@@ -1637,6 +1638,7 @@ class ConsoleLogInterface(ScrollArea):
 
         self.setWidget(self.view)
         self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setStyleSheet("background: transparent; border: none;")
 
     def append_log(self, text: str):
@@ -1898,6 +1900,13 @@ class MainWindow(FluentWindow):
             self.console_page,
             FIF.DOCUMENT,
             "控制台日志",
+            NavigationItemPosition.BOTTOM,
+        )
+        # 重新注册关于页，确保其始终位于底部最后一项
+        self.addSubInterface(
+            self.about_page,
+            FIF.INFO,
+            "关于",
             NavigationItemPosition.BOTTOM,
         )
         self.debug_page.setViewportMargins(0, 0, 0, 52)
