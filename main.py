@@ -2,7 +2,8 @@ import sys
 import time
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                                QLabel, QLayout, QPushButton, QColorDialog, QFrame)
+                                QLabel, QLayout, QPushButton, QColorDialog, QFrame,
+                                QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics)
 from shiboken6 import isValid
@@ -110,6 +111,10 @@ class PromptSettingCard(CardWidget):
 
     def __init__(self, icon, title, subtitle, height=110, parent=None):
         super().__init__(parent=parent)
+        body_h = max(80, int(height))
+        self.setMinimumHeight(body_h + 72)
+        self.setMaximumHeight(body_h + 72)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(16, 12, 16, 12)
         self.layout.setSpacing(8)
@@ -135,7 +140,8 @@ class PromptSettingCard(CardWidget):
         self.layout.addLayout(top)
 
         self.editor = TextEdit(self)
-        self.editor.setFixedHeight(height)
+        self.editor.setFixedHeight(body_h)
+        self.editor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.layout.addWidget(self.editor)
 
 
@@ -1308,7 +1314,6 @@ class OverlaySettingInterface(ScrollArea):
             self.sw_auto_merge_card,
             self.min_line_h_card,
             self.joiner_card,
-            self.overlay_min_h_card
         ):
             self.overlay_group.addSettingCard(card)
 
