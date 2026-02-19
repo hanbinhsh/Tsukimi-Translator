@@ -7,6 +7,11 @@ DEFAULT_CONFIG = {
     # --- AI 模型 ---
     "ocr_model": "glm-ocr:latest",
     "llm_model": "qwen3-vl:2b-instruct",
+    "ocr_api": "http://localhost:11434/api/generate",
+    "ocr_key": "",
+    "llm_api": "http://localhost:11434/api/generate",
+    "llm_key": "",
+    "ocr_prompt": "Extract all text from this image. Output only the text content, no explanations.",
     "use_ocr": True,
     "use_llm": True,
     "use_stream": False,            # 是否流式输出
@@ -33,9 +38,14 @@ DEFAULT_CONFIG = {
     "show_ocr_text": False,         # 是否同时显示 OCR 原文
     "ocr_color": "#FFFF88",         # OCR 原文颜色
     "trans_color": "#FFFFFF",       # 译文颜色
+    "overlay_min_box_height": 28,    # 贴字文本框最小高度
+    "overlay_auto_merge_lines": False, # 自动识别换行并拼接
+    "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
+    "overlay_joiner": " ",           # 拼接字符（中日文可设为空）
 
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
+    "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "auto_copy": False,
 }
 
