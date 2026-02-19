@@ -121,9 +121,12 @@ class OllamaTranslator:
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self.cfg["ocr_model"],
-            "prompt": "<|grounding|>OCR the image.",
+            "prompt": "\\n<|grounding|>OCR the image.",
             "images": [b64],
             "stream": False,
+            "options": {
+                "temperature": 0,
+            }
         }
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
