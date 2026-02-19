@@ -1,26 +1,20 @@
 import sys
 import time
 from pathlib import Path
-<<<<<<< codex/add-ocr-model-settings-nitj9v
+import requests
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
-=======
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
->>>>>>> main
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                                QLabel, QLayout, QPushButton, QColorDialog, QFrame,
+                                QLabel, QLayout, QPushButton, QFrame,
                                 QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
-<<<<<<< codex/add-ocr-model-settings-nitj9v
+                           QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices)
-=======
-                           QFont, QPainterPath, QFontMetrics, QIcon)
->>>>>>> main
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
-                             MessageBox, NavigationItemPosition)
+                             MessageBox, NavigationItemPosition, ColorDialog)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -92,10 +86,48 @@ class ColorButton(QPushButton):
         return self._color
 
     def _pick(self):
-        c = QColorDialog.getColor(QColor(self._color), self, "选择颜色")
-        if c.isValid():
-            self.setColor(c.name())
-            self.color_changed.emit(c.name())
+        dlg = ColorDialog(QColor(self._color), "选择颜色", self.window() or self)
+        if dlg.exec():
+            c = dlg.color
+            if c.isValid():
+                self.setColor(c.name())
+                self.color_changed.emit(c.name())
+
+
+class AvatarLabel(QLabel):
+    """圆形头像标签，点击后跳转链接。"""
+
+    def __init__(self, size=36, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.setCursor(Qt.PointingHandCursor)
+        self._url = ""
+
+    def set_url(self, url: str):
+        self._url = url
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self._url:
+            QDesktopServices.openUrl(QUrl(self._url))
+        super().mousePressEvent(event)
+
+    def set_avatar_from_bytes(self, data: bytes):
+        pix = QPixmap()
+        if not pix.loadFromData(data):
+            return
+        s = min(self.width(), self.height())
+        pix = pix.scaled(s, s, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+
+        rounded = QPixmap(s, s)
+        rounded.fill(Qt.transparent)
+        painter = QPainter(rounded)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addEllipse(0, 0, s, s)
+        painter.setClipPath(path)
+        painter.drawPixmap(0, 0, pix)
+        painter.end()
+        self.setPixmap(rounded)
 
 
 # ══════════════════════════════════════════════
@@ -1527,10 +1559,17 @@ class AboutInterface(ScrollArea):
         self.layout.setSpacing(15)
 
         self.info_group = SettingCardGroup("关于", self.view)
+        self.repo_api = "hanbinhsh/Tsukimi-Translator"
+        self.repo_url = "https://github.com/hanbinhsh/Tsukimi-Translator"
+        self.author_url = "https://github.com/hanbinhsh"
+        self.current_version = "0.1"
 
-        self.name_card = CustomSettingCard(FIF.INFO, "应用名称", "Tsukimi Translator", self.info_group)
         self.version_card = CustomSettingCard(FIF.TAG, "当前版本", "0.1", self.info_group)
-        self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "Tsukimi Translator Contributors", self.info_group)
+        self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "IceRinne aka. hanbinhsh", self.info_group)
+        self.avatar = AvatarLabel(36, self)
+        self.avatar.set_url(self.author_url)
+        self._load_github_avatar()
+        self.author_card.addWidget(self.avatar)
 
         self.repo_card = CustomSettingCard(
             FIF.LINK,
@@ -1548,9 +1587,8 @@ class AboutInterface(ScrollArea):
         self.update_card.addWidget(self.update_btn)
 
         for card in (
-            self.name_card,
-            self.version_card,
             self.author_card,
+            self.version_card,
             self.repo_card,
             self.update_card,
         ):
@@ -1563,18 +1601,47 @@ class AboutInterface(ScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet("background: transparent; border: none;")
 
-        self.repo_url = "https://github.com/hanbinhsh/Tsukimi-Translator"
-        self.current_version = "0.1"
-
     def open_repo(self):
         QDesktopServices.openUrl(QUrl(self.repo_url))
 
+    def _load_github_avatar(self):
+        try:
+            api = f"https://api.github.com/users/{self.repo_api.split('/')[0]}"
+            resp = requests.get(api, timeout=8)
+            resp.raise_for_status()
+            avatar_url = resp.json().get("avatar_url", "")
+            if avatar_url:
+                img = requests.get(avatar_url, timeout=8)
+                img.raise_for_status()
+                self.avatar.set_avatar_from_bytes(img.content)
+        except Exception:
+            pass
+
     def check_update(self):
-        InfoBar.info(
-            "检查更新",
-            f"当前版本 {self.current_version}，暂未配置在线更新源。",
-            parent=self,
-        )
+        try:
+            url = f"https://api.github.com/repos/{self.repo_api}/releases/latest"
+            resp = requests.get(url, timeout=8)
+            if resp.status_code == 404:
+                # 没有 release 时，降级读取最新 tag
+                tag_resp = requests.get(f"https://api.github.com/repos/{self.repo_api}/tags", timeout=8)
+                tag_resp.raise_for_status()
+                tags = tag_resp.json()
+                latest = tags[0]["name"] if tags else "unknown"
+            else:
+                resp.raise_for_status()
+                data = resp.json()
+                latest = data.get("tag_name") or data.get("name") or "unknown"
+
+            if latest.lstrip("vV") == self.current_version.lstrip("vV"):
+                InfoBar.success("检查更新", f"当前已是最新版本：{self.current_version}", parent=self)
+            else:
+                InfoBar.warning(
+                    "发现新版本",
+                    f"当前版本：{self.current_version}，最新版本：{latest}",
+                    parent=self,
+                )
+        except Exception as e:
+            InfoBar.error("检查更新失败", f"无法连接 GitHub API：{e}", parent=self)
 
 
 # ══════════════════════════════════════════════
