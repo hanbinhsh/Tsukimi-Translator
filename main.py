@@ -1671,7 +1671,6 @@ class DebugSettingInterface(ScrollArea):
         self.sw_dump_image_card.addWidget(self.sw_dump_image)
         self.debug_group.addSettingCard(self.sw_dump_image_card)
 
-<<<<<<< codex/add-debug-settings-and-console-log-tabs-urzpdt
         self.sw_log_ocr_raw_card = CustomSettingCard(
             FIF.DOCUMENT,
             "日志打印 OCR 原始内容",
@@ -1692,8 +1691,6 @@ class DebugSettingInterface(ScrollArea):
         self.sw_log_ocr_text_card.addWidget(self.sw_log_ocr_text)
         self.debug_group.addSettingCard(self.sw_log_ocr_text_card)
 
-=======
->>>>>>> main
         self.layout.addWidget(self.debug_group)
         self.layout.addStretch(1)
 
@@ -2155,15 +2152,12 @@ class MainWindow(FluentWindow):
         self.debug_page.sw_dump_image.setChecked(
             self.cfg.get("save_debug_images", False)
         )
-<<<<<<< codex/add-debug-settings-and-console-log-tabs-urzpdt
         self.debug_page.sw_log_ocr_raw.setChecked(
             self.cfg.get("log_ocr_raw", False)
         )
         self.debug_page.sw_log_ocr_text.setChecked(
             self.cfg.get("log_ocr_text", False)
         )
-=======
->>>>>>> main
 
     def _sync_region_ui(self):
         region = self.cfg.get("capture_region")
@@ -2217,12 +2211,8 @@ class MainWindow(FluentWindow):
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
             "save_debug_images": self.debug_page.sw_dump_image.isChecked(),
-<<<<<<< codex/add-debug-settings-and-console-log-tabs-urzpdt
             "log_ocr_raw": self.debug_page.sw_log_ocr_raw.isChecked(),
             "log_ocr_text": self.debug_page.sw_log_ocr_text.isChecked(),
-=======
-            "overlay_ocr_prompt": self.overlay_page.overlay_prompt_edit.toPlainText(),
->>>>>>> main
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
             "overlay_max_line_gap": int(self.overlay_page.max_line_gap_spin.value()),
             "overlay_joiner": self.overlay_page.joiner_edit.text(),
