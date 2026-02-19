@@ -18,6 +18,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
+                             CheckBox,
                              MessageBox, NavigationItemPosition, ColorDialog)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
@@ -2014,6 +2015,297 @@ class RuleGroupEditorDialog(QDialog):
     def __init__(self, group_data: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
+        self.resize(980, 520)
+        self.group_data = copy.deepcopy(group_data)
+        self.rules = self.group_data.get("rules", [])
+        self._copied_rule = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.addStretch(1)
+        self.copy_btn = PushButton("复制规则")
+        self.paste_btn = PushButton("粘贴规则")
+        self.del_btn = PushButton("删除规则")
+        self.add_btn = PrimaryPushButton("新增规则")
+        for btn in (self.copy_btn, self.paste_btn, self.del_btn, self.add_btn):
+            btn.setFixedWidth(100)
+            head.addWidget(btn)
+        layout.addLayout(head)
+
+        self.row_items = []
+
+        table_wrap = QFrame(self)
+        table_layout = QVBoxLayout(table_wrap)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(6)
+
+        header = QWidget(table_wrap)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+        header_layout.setSpacing(8)
+        header_specs = [
+            ("", 28),
+            ("规则名称", 170),
+            ("替换文本", 220),
+            ("替换为", 220),
+            ("启用", 60),
+            ("正则", 60),
+            ("区分大小写", 90),
+            ("全字匹配", 80),
+            ("上下移动", 90),
+            ("删除", 60),
+        ]
+        for text, width in header_specs:
+            label = QLabel(text, header)
+            label.setAlignment(Qt.AlignCenter)
+            label.setFixedWidth(width)
+            header_layout.addWidget(label)
+        header_layout.addStretch(1)
+        table_layout.addWidget(header)
+
+        self.rows_container = QWidget(table_wrap)
+        self.rows_layout = QVBoxLayout(self.rows_container)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setSpacing(6)
+        self.rows_layout.addStretch(1)
+
+        self.rows_scroll = QScrollArea(table_wrap)
+        self.rows_scroll.setWidgetResizable(True)
+        self.rows_scroll.setFrameShape(QFrame.NoFrame)
+        self.rows_scroll.setWidget(self.rows_container)
+        table_layout.addWidget(self.rows_scroll)
+
+        layout.addWidget(table_wrap)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setWordWrap(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        for c in (1, 2, 3, 4, 5, 6):
+            header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        layout.addWidget(self.table)
+
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        self.ok_btn = PrimaryPushButton("确定")
+        self.cancel_btn = PushButton("取消")
+        bottom.addWidget(self.cancel_btn)
+        bottom.addWidget(self.ok_btn)
+        layout.addLayout(bottom)
+
+        self.copy_btn.clicked.connect(self.copy_selected_rule)
+        self.paste_btn.clicked.connect(self.paste_rule)
+        self.del_btn.clicked.connect(self.delete_selected_rules)
+        self.add_btn.clicked.connect(self.add_rule)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.ok_btn.clicked.connect(self.accept)
+
+        self._reload_table()
+
+    def _selected_rows(self) -> list[int]:
+        rows = []
+        for i, row in enumerate(self.row_items):
+            if row["selected"].isChecked():
+                rows.append(i)
+        return rows
+
+    def _reload_table(self):
+        while self.rows_layout.count() > 1:
+            item = self.rows_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        self.row_items = []
+        for r, rule in enumerate(self.rules):
+            row_widget = QFrame(self.rows_container)
+            row_widget.setObjectName("ruleRow")
+            row_widget.setStyleSheet("#ruleRow { border: 1px solid rgba(120,120,120,0.25); border-radius: 6px; }")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(8, 6, 8, 6)
+            row_layout.setSpacing(8)
+
+            selected_cb = CheckBox(parent=row_widget)
+            selected_cb.setFixedWidth(28)
+            row_layout.addWidget(selected_cb)
+
+            name_edit = LineEdit(row_widget)
+            name_edit.setFixedWidth(170)
+            name_edit.setText(rule.get("name", f"规则{r + 1}"))
+            row_layout.addWidget(name_edit)
+
+            pattern_edit = LineEdit(row_widget)
+            pattern_edit.setPlaceholderText("要匹配的文本")
+            pattern_edit.setFixedWidth(220)
+            pattern_edit.setText(rule.get("pattern", ""))
+            row_layout.addWidget(pattern_edit)
+
+            replacement_edit = LineEdit(row_widget)
+            replacement_edit.setPlaceholderText("替换后的文本")
+            replacement_edit.setFixedWidth(220)
+            replacement_edit.setText(rule.get("replacement", ""))
+            row_layout.addWidget(replacement_edit)
+
+            enabled_cb = CheckBox(parent=row_widget)
+            enabled_cb.setFixedWidth(60)
+            enabled_cb.setChecked(bool(rule.get("enabled", True)))
+            row_layout.addWidget(enabled_cb)
+
+            regex_cb = CheckBox(parent=row_widget)
+            regex_cb.setFixedWidth(60)
+            regex_cb.setChecked(bool(rule.get("regex", False)))
+            row_layout.addWidget(regex_cb)
+
+            case_cb = CheckBox(parent=row_widget)
+            case_cb.setFixedWidth(90)
+            case_cb.setChecked(bool(rule.get("case_sensitive", False)))
+            row_layout.addWidget(case_cb)
+
+            whole_cb = CheckBox(parent=row_widget)
+            whole_cb.setFixedWidth(80)
+            whole_cb.setChecked(bool(rule.get("whole_word", False)))
+            row_layout.addWidget(whole_cb)
+
+            up_down = QWidget(row_widget)
+        if not self.table.selectionModel():
+            return []
+        return sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
+
+    def _reload_table(self):
+        self.table.setRowCount(len(self.rules))
+        for r, rule in enumerate(self.rules):
+            name_item = QTableWidgetItem(rule.get("name", f"规则{r + 1}"))
+            self.table.setItem(r, 0, name_item)
+
+            enabled_cb = QCheckBox()
+            enabled_cb.setChecked(bool(rule.get("enabled", True)))
+            self.table.setCellWidget(r, 1, enabled_cb)
+
+            for col, key in ((2, "regex"), (3, "case_sensitive"), (4, "whole_word")):
+                cb = QCheckBox()
+                cb.setChecked(bool(rule.get(key, False)))
+                self.table.setCellWidget(r, col, cb)
+
+            up_down = QWidget(self.table)
+            up_down_layout = QHBoxLayout(up_down)
+            up_down_layout.setContentsMargins(0, 0, 0, 0)
+            up_btn = PushButton("↑")
+            down_btn = PushButton("↓")
+            up_btn.setFixedWidth(36)
+            down_btn.setFixedWidth(36)
+            up_btn.clicked.connect(lambda _, i=r: self.move_rule(i, -1))
+            down_btn.clicked.connect(lambda _, i=r: self.move_rule(i, 1))
+            up_down_layout.addWidget(up_btn)
+            up_down_layout.addWidget(down_btn)
+            up_down.setFixedWidth(90)
+            row_layout.addWidget(up_down)
+
+            del_btn = PushButton("删除", row_widget)
+            del_btn.setFixedWidth(60)
+            del_btn.clicked.connect(lambda _, i=r: self.delete_rule(i))
+            row_layout.addWidget(del_btn)
+            row_layout.addStretch(1)
+
+            self.rows_layout.insertWidget(self.rows_layout.count() - 1, row_widget)
+            self.row_items.append({
+                "selected": selected_cb,
+                "name": name_edit,
+                "pattern": pattern_edit,
+                "replacement": replacement_edit,
+                "enabled": enabled_cb,
+                "regex": regex_cb,
+                "case_sensitive": case_cb,
+                "whole_word": whole_cb,
+            })
+
+
+    def _sync_back(self):
+        for r, row in enumerate(self.row_items):
+            self.rules[r]["name"] = row["name"].text().strip() or f"规则{r + 1}"
+            self.rules[r]["pattern"] = row["pattern"].text()
+            self.rules[r]["replacement"] = row["replacement"].text()
+            self.rules[r]["enabled"] = bool(row["enabled"].isChecked())
+            self.rules[r]["regex"] = bool(row["regex"].isChecked())
+            self.rules[r]["case_sensitive"] = bool(row["case_sensitive"].isChecked())
+            self.rules[r]["whole_word"] = bool(row["whole_word"].isChecked())
+            self.rules[r]["name"] = self.table.item(r, 0).text() if self.table.item(r, 0) else f"规则{r + 1}"
+            enabled_widget = self.table.cellWidget(r, 1)
+            regex_widget = self.table.cellWidget(r, 2)
+            case_widget = self.table.cellWidget(r, 3)
+            whole_widget = self.table.cellWidget(r, 4)
+            self.rules[r]["enabled"] = bool(enabled_widget.isChecked()) if isinstance(enabled_widget, QCheckBox) else True
+            self.rules[r]["regex"] = bool(regex_widget.isChecked()) if isinstance(regex_widget, QCheckBox) else False
+            self.rules[r]["case_sensitive"] = bool(case_widget.isChecked()) if isinstance(case_widget, QCheckBox) else False
+            self.rules[r]["whole_word"] = bool(whole_widget.isChecked()) if isinstance(whole_widget, QCheckBox) else False
+
+    def add_rule(self):
+        self._sync_back()
+        self.rules.append({
+            "name": f"规则{len(self.rules) + 1}",
+            "pattern": "",
+            "replacement": "",
+            "regex": False,
+            "case_sensitive": False,
+            "whole_word": False,
+            "enabled": True,
+        })
+        self._reload_table()
+
+    def move_rule(self, index: int, delta: int):
+        self._sync_back()
+        target = index + delta
+        if not (0 <= index < len(self.rules) and 0 <= target < len(self.rules)):
+            return
+        self.rules[index], self.rules[target] = self.rules[target], self.rules[index]
+        self._reload_table()
+
+    def delete_rule(self, index: int):
+        self._sync_back()
+        if 0 <= index < len(self.rules):
+            self.rules.pop(index)
+        if not self.rules:
+            self.add_rule()
+        else:
+            self._reload_table()
+
+    def delete_selected_rules(self):
+        self._sync_back()
+        rows = set(self._selected_rows())
+        self.rules = [r for i, r in enumerate(self.rules) if i not in rows]
+        if not self.rules:
+            self.add_rule()
+        else:
+            self._reload_table()
+
+    def copy_selected_rule(self):
+        self._sync_back()
+        rows = self._selected_rows()
+        if rows:
+            self._copied_rule = copy.deepcopy(self.rules[rows[0]])
+
+    def paste_rule(self):
+        if not self._copied_rule:
+            return
+        self._sync_back()
+        self.rules.append(copy.deepcopy(self._copied_rule))
+        self._reload_table()
+
+    def get_group_data(self) -> dict:
+        self._sync_back()
+        self.group_data["rules"] = self.rules
+        return self.group_data
+
+
+class RuleGroupEditorDialog(QDialog):
+    def __init__(self, group_data: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
         self.resize(1320, 680)
         self.group_data = copy.deepcopy(group_data)
         self.rules = self.group_data.get("rules", [])
@@ -2119,7 +2411,7 @@ class RuleGroupEditorDialog(QDialog):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = QCheckBox(row_widget)
+            selected_cb = CheckBox(parent=row_widget)
             selected_cb.setFixedWidth(28)
             row_layout.addWidget(selected_cb)
 
@@ -2140,25 +2432,25 @@ class RuleGroupEditorDialog(QDialog):
             replacement_edit.setText(rule.get("replacement", ""))
             row_layout.addWidget(replacement_edit)
 
-            enabled_sw = SwitchButton(row_widget)
-            enabled_sw.setFixedWidth(60)
-            enabled_sw.setChecked(bool(rule.get("enabled", True)))
-            row_layout.addWidget(enabled_sw)
+            enabled_cb = CheckBox(parent=row_widget)
+            enabled_cb.setFixedWidth(60)
+            enabled_cb.setChecked(bool(rule.get("enabled", True)))
+            row_layout.addWidget(enabled_cb)
 
-            regex_sw = SwitchButton(row_widget)
-            regex_sw.setFixedWidth(60)
-            regex_sw.setChecked(bool(rule.get("regex", False)))
-            row_layout.addWidget(regex_sw)
+            regex_cb = CheckBox(parent=row_widget)
+            regex_cb.setFixedWidth(60)
+            regex_cb.setChecked(bool(rule.get("regex", False)))
+            row_layout.addWidget(regex_cb)
 
-            case_sw = SwitchButton(row_widget)
-            case_sw.setFixedWidth(90)
-            case_sw.setChecked(bool(rule.get("case_sensitive", False)))
-            row_layout.addWidget(case_sw)
+            case_cb = CheckBox(parent=row_widget)
+            case_cb.setFixedWidth(90)
+            case_cb.setChecked(bool(rule.get("case_sensitive", False)))
+            row_layout.addWidget(case_cb)
 
-            whole_sw = SwitchButton(row_widget)
-            whole_sw.setFixedWidth(80)
-            whole_sw.setChecked(bool(rule.get("whole_word", False)))
-            row_layout.addWidget(whole_sw)
+            whole_cb = CheckBox(parent=row_widget)
+            whole_cb.setFixedWidth(80)
+            whole_cb.setChecked(bool(rule.get("whole_word", False)))
+            row_layout.addWidget(whole_cb)
 
             up_down = QWidget(row_widget)
             up_down_layout = QHBoxLayout(up_down)
@@ -2186,10 +2478,10 @@ class RuleGroupEditorDialog(QDialog):
                 "name": name_edit,
                 "pattern": pattern_edit,
                 "replacement": replacement_edit,
-                "enabled": enabled_sw,
-                "regex": regex_sw,
-                "case_sensitive": case_sw,
-                "whole_word": whole_sw,
+                "enabled": enabled_cb,
+                "regex": regex_cb,
+                "case_sensitive": case_cb,
+                "whole_word": whole_cb,
             })
 
 
@@ -2296,7 +2588,9 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn = PrimaryPushButton("新增规则组", self.top_bar)
         self.copy_group_btn = PushButton("复制规则组", self.top_bar)
         self.del_group_btn = PushButton("删除规则组", self.top_bar)
-        for b in (self.del_group_btn, self.copy_group_btn, self.add_group_btn):
+        self.reset_btn = PushButton("重置设置", self.top_bar)
+        self.save_btn = PrimaryPushButton("保存设置", self.top_bar)
+        for b in (self.reset_btn, self.del_group_btn, self.copy_group_btn, self.add_group_btn, self.save_btn):
             b.setFixedWidth(110)
             top_layout.addWidget(b)
 
@@ -2349,6 +2643,8 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn.clicked.connect(self.add_group)
         self.copy_group_btn.clicked.connect(self.copy_group)
         self.del_group_btn.clicked.connect(self.delete_group)
+        self.reset_btn.clicked.connect(self.reset_rule_settings)
+        self.save_btn.clicked.connect(self.save_rule_settings)
 
         self._reload_group_table()
 
@@ -2396,7 +2692,7 @@ class RuleSettingInterface(ScrollArea):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = QCheckBox(row_widget)
+            selected_cb = CheckBox(parent=row_widget)
             selected_cb.setFixedWidth(28)
             row_layout.addWidget(selected_cb)
 
@@ -2429,18 +2725,41 @@ class RuleSettingInterface(ScrollArea):
             edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
             row_layout.addWidget(edit_btn)
 
-            enabled_sw = SwitchButton(row_widget)
-            enabled_sw.setFixedWidth(60)
-            enabled_sw.setChecked(group.get("enabled", True))
-            row_layout.addWidget(enabled_sw)
+            enabled_cb = CheckBox(parent=row_widget)
+            enabled_cb.setFixedWidth(60)
+            enabled_cb.setChecked(group.get("enabled", True))
+            row_layout.addWidget(enabled_cb)
             row_layout.addStretch(1)
 
             self.group_rows_layout.insertWidget(self.group_rows_layout.count() - 1, row_widget)
             self.group_rows.append({
                 "selected": selected_cb,
                 "name": name_edit,
-                "enabled": enabled_sw,
+                "enabled": enabled_cb,
             })
+
+    def save_rule_settings(self):
+        win = self.window()
+        if hasattr(win, "save_all"):
+            win.save_all()
+            return
+        self.sync_to_config()
+        save_config(self.cfg)
+        InfoBar.success("保存成功", "规则设置已保存", parent=self.window() or self)
+
+    def reset_rule_settings(self):
+        win = self.window()
+        if hasattr(win, "reset_all_settings"):
+            win.reset_all_settings()
+            self._reload_group_table()
+            return
+        loaded = load_config()
+        self.cfg.clear()
+        self.cfg.update(loaded)
+        self.cfg["ocr_rule_groups"] = normalize_rule_groups(self.cfg.get("ocr_rule_groups", []))
+        self.cfg["output_rule_groups"] = normalize_rule_groups(self.cfg.get("output_rule_groups", []))
+        self._reload_group_table()
+        InfoBar.success("已重置", "规则设置已恢复为配置文件状态", parent=self.window() or self)
 
 
     def add_group(self):
