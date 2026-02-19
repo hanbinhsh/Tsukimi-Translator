@@ -857,7 +857,7 @@ class SubtitleOverlay(QWidget):
             }
             QScrollBar:vertical {
                 background: transparent;
-                width: 8px;
+                width: 4px;
                 margin: 2px 1px 2px 0;
             }
             QScrollBar::handle:vertical {
