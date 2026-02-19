@@ -944,7 +944,7 @@ class SubtitleOverlay(QWidget):
         for idx, it in enumerate(items, start=1):
             src = it.get("text", "")
             dst = it.get("translated", src)
-            overlay_lines.append(f"[{idx}] OCR: {src}\n[{idx}] LLM: {dst}")
+            overlay_lines.append(f"{dst}")
         if overlay_lines:
             debug_text = "\n\n".join(overlay_lines)
             print(f"[贴字模型输出全文]\n{debug_text}\n[贴字模型输出结束]")
