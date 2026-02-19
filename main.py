@@ -2040,7 +2040,7 @@ class RuleGroupEditorDialog(QDialog):
 
         self.setObjectName("ruleGroupEditorDialog")
         self.setStyleSheet(
-            "#ruleGroupEditorDialog { background: transparent; }"
+            "#ruleGroupEditorDialog { background: rgb(39,39,39); }"
             "#ruleEditorTopBar { background: transparent; border-bottom: 1px solid rgba(120,120,120,0.35); }"
             "#ruleEditorTable { border: 1px solid rgba(120,120,120,0.25); border-radius: 8px; }"
             "#ruleEditorBottomBar { border-top: 1px solid rgba(120,120,120,0.35); }"
@@ -2170,7 +2170,7 @@ class RuleGroupEditorDialog(QDialog):
         for r, rule in enumerate(self.rules):
             row_widget = QFrame(self.rows_container)
             row_widget.setObjectName("ruleRow")
-            row_widget.setStyleSheet("#ruleRow { border: 1px solid rgba(120,120,120,0.25); border-radius: 6px; }")
+            row_widget.setStyleSheet("#ruleRow { border-bottom: 1px solid rgba(120,120,120,0.25); border-radius: 0px; }")
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
