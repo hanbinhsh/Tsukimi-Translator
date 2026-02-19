@@ -589,11 +589,7 @@ class TextOverlayWindow(QWidget):
             bg = QLabel(self)
             bg_h = lh * 2 if show_orig else lh
             bg.setGeometry(lx1, ly1, lw, bg_h)
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-xm9abz
             bg.setStyleSheet(f"background: rgba(10,10,10,{overlay_alpha}); border-radius: 4px;")
-=======
-            bg.setStyleSheet(f"background: rgba(8,8,8,{overlay_alpha}); border-radius: 4px;")
->>>>>>> main
             bg.show()
             # bg 作为普通 QLabel 不加入 _labels 列表（不需要颜色更新），
             # 但需要随本窗口清理 → 用父子关系自动管理
@@ -788,7 +784,7 @@ class SubtitleOverlay(QWidget):
             }
             QScrollBar:vertical {
                 background: transparent;
-                width: 8px;
+                width: 4px;
                 margin: 2px 1px 2px 0;
             }
             QScrollBar::handle:vertical {
