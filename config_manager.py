@@ -38,12 +38,14 @@ DEFAULT_CONFIG = {
     "window_visible": True,
     "ui_max_width": 800,
     "grow_direction": "up",         # "up" 向上扩展 / "down" 向下扩展
+    "click_through": False,          # 是否允许鼠标点击穿透悬浮对话框
 
     # --- 字幕外观 ---
     "show_ocr_text": False,         # 是否同时显示 OCR 原文
     "ocr_color": "#FFFF88",         # OCR 原文颜色
     "trans_color": "#FFFFFF",       # 译文颜色
     "ui_max_height": 0,              # 字幕文本框最大高度，0 表示不限制
+    "overlay_opacity": 82,           # 悬浮对话框透明度（百分比）
     "overlay_min_box_height": 28,    # 贴字文本框最小高度
     "overlay_auto_merge_lines": False, # 自动识别换行并拼接
     "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
