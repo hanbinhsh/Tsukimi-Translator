@@ -1784,6 +1784,10 @@ class MainWindow(FluentWindow):
 
         self._dev_unlock_seq = ""
         self._dev_tabs_unlocked = bool(self.cfg.get("dev_tabs_unlocked", False))
+        if not self._dev_tabs_unlocked:
+            # 未注册到导航前先隐藏，避免作为普通子控件出现在左上角
+            self.debug_page.hide()
+            self.console_page.hide()
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
@@ -1871,6 +1875,8 @@ class MainWindow(FluentWindow):
     def _register_dev_tabs_if_needed(self):
         if not self._dev_tabs_unlocked:
             return
+        self.debug_page.show()
+        self.console_page.show()
         self.addSubInterface(
             self.debug_page,
             FIF.DEVELOPER_TOOLS,
@@ -1890,6 +1896,13 @@ class MainWindow(FluentWindow):
         self._dev_tabs_unlocked = True
         self.cfg["dev_tabs_unlocked"] = True
         save_config(self.cfg)
+        self.debug_page.show()
+        self.console_page.show()
+        if hasattr(self, "removeSubInterface"):
+            try:
+                self.removeSubInterface(self.about_page)
+            except Exception:
+                pass
         self.addSubInterface(
             self.debug_page,
             FIF.DEVELOPER_TOOLS,
