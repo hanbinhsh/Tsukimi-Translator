@@ -37,6 +37,9 @@ class OllamaTranslator:
             "images": [b64],
             "stream": False,
         }
+        ocr_ctx = int(self.cfg.get("ocr_context_length", 8192))
+        if ocr_ctx > 0:
+            payload["options"] = {"num_ctx": ocr_ctx}
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
         ).json()
@@ -81,6 +84,9 @@ class OllamaTranslator:
             "prompt": full_prompt,
             "stream": stream,
         }
+        llm_ctx = int(self.cfg.get("llm_context_length", 8192))
+        if llm_ctx > 0:
+            payload["options"] = {"num_ctx": llm_ctx}
         # 若没有文字（OCR 关闭），直接把图片发给多模态 LLM
         if not text.strip() and image_bytes:
             payload["images"] = [base64.b64encode(image_bytes).decode()]
@@ -121,13 +127,16 @@ class OllamaTranslator:
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self.cfg["ocr_model"],
-            "prompt": "\\n<|grounding|>OCR the image.",
+            "prompt": self.cfg.get("overlay_ocr_prompt", "\\n<|grounding|>OCR the image."),
             "images": [b64],
             "stream": False,
             "options": {
                 "temperature": 0,
             }
         }
+        ocr_ctx = int(self.cfg.get("ocr_context_length", 8192))
+        if ocr_ctx > 0:
+            payload["options"]["num_ctx"] = ocr_ctx
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
         ).json()
