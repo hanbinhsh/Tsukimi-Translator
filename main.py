@@ -9,7 +9,8 @@ from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
-                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget)
+                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
+                             NavigationItemPosition)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -1297,7 +1298,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         self.cfg = load_config()
         setTheme(Theme.DARK)
-        self.setWindowTitle("Ollama Translator Pro")
+        self.setWindowTitle("Tsukimi Translator")
         self.setWindowIcon(FIF.LANGUAGE.icon())
         self.resize(820, 820)
 
