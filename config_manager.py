@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 
 CONFIG_FILE = "config.json"
 
@@ -38,12 +39,14 @@ DEFAULT_CONFIG = {
     "window_visible": True,
     "ui_max_width": 800,
     "grow_direction": "up",         # "up" 向上扩展 / "down" 向下扩展
+    "click_through": False,          # 是否允许鼠标点击穿透悬浮对话框
 
     # --- 字幕外观 ---
     "show_ocr_text": False,         # 是否同时显示 OCR 原文
     "ocr_color": "#FFFF88",         # OCR 原文颜色
     "trans_color": "#FFFFFF",       # 译文颜色
     "ui_max_height": 0,              # 字幕文本框最大高度，0 表示不限制
+    "overlay_opacity": 82,           # 悬浮对话框透明度（百分比）
     "overlay_min_box_height": 28,    # 贴字文本框最小高度
     "overlay_auto_merge_lines": False, # 自动识别换行并拼接
     "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
@@ -52,6 +55,42 @@ DEFAULT_CONFIG = {
     "remove_blank_lines": False,      # 自动移除翻译文本框中的空行
     "line_start_chars": ",.;:!?)]}、，。！？；：」』）】》",  # 下一行若以这些字符开头则判定为续句
     "line_end_chars": ".!?。！？…",  # 上一行若以这些字符结尾则判定为一句结束
+
+    # --- 规则设置 ---
+    "ocr_rule_groups": [
+        {
+            "name": "默认 OCR 规则组",
+            "enabled": True,
+            "rules": [
+                {
+                    "name": "去除首尾空白",
+                    "pattern": r"^\s+|\s+$",
+                    "replacement": "",
+                    "regex": True,
+                    "case_sensitive": False,
+                    "whole_word": False,
+                    "enabled": True,
+                }
+            ],
+        }
+    ],
+    "output_rule_groups": [
+        {
+            "name": "默认输出规则组",
+            "enabled": True,
+            "rules": [
+                {
+                    "name": "合并连续空行",
+                    "pattern": r"\n{3,}",
+                    "replacement": "\n\n",
+                    "regex": True,
+                    "case_sensitive": False,
+                    "whole_word": False,
+                    "enabled": True,
+                }
+            ],
+        }
+    ],
 
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
@@ -69,9 +108,9 @@ def load_config():
             local_cfg = json.load(f)
             for k, v in DEFAULT_CONFIG.items():
                 if k not in local_cfg:
-                    local_cfg[k] = v
+                    local_cfg[k] = copy.deepcopy(v)
             return local_cfg
-    return DEFAULT_CONFIG.copy()
+    return copy.deepcopy(DEFAULT_CONFIG)
 
 def save_config(config):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
