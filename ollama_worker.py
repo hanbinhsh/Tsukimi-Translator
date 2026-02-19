@@ -5,8 +5,21 @@ import json
 
 class OllamaTranslator:
     def __init__(self, config):
-        self.url = "http://localhost:11434/api/generate"
         self.cfg = config
+
+    def _api_for(self, service: str) -> str:
+        default = "http://localhost:11434/api/generate"
+        if service == "ocr":
+            return self.cfg.get("ocr_api", default).strip() or default
+        return self.cfg.get("llm_api", default).strip() or default
+
+    def _headers_for(self, service: str) -> dict:
+        key = (self.cfg.get("ocr_key", "") if service == "ocr"
+               else self.cfg.get("llm_key", "")).strip()
+        headers = {"Content-Type": "application/json"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        return headers
 
     # ──────────────────────────────────────────
     # 独立方法（供 TranslationThread 分步调用）
@@ -21,19 +34,25 @@ class OllamaTranslator:
             "images": [b64],
             "stream": False,
         }
-        res = requests.post(self.url, json=payload, timeout=20).json()
+        res = requests.post(
+            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
+        ).json()
         return res.get("response", "").strip()
 
     def run_llm(self, text: str, image_bytes: bytes = None) -> str:
         """调用 LLM 进行翻译/润色（非流式），返回结果字符串"""
         payload = self._build_llm_payload(text, image_bytes, stream=False)
-        res = requests.post(self.url, json=payload, timeout=30).json()
+        res = requests.post(
+            self._api_for("llm"), json=payload, headers=self._headers_for("llm"), timeout=30
+        ).json()
         return res.get("response", "").strip()
 
     def run_llm_stream(self, text: str, image_bytes: bytes = None):
         """调用 LLM 进行翻译/润色（流式），逐 token yield 字符串片段"""
         payload = self._build_llm_payload(text, image_bytes, stream=True)
-        with requests.post(self.url, json=payload, timeout=60, stream=True) as resp:
+        with requests.post(
+            self._api_for("llm"), json=payload, headers=self._headers_for("llm"), timeout=60, stream=True
+        ) as resp:
             for line in resp.iter_lines():
                 if not line:
                     continue
@@ -103,7 +122,9 @@ class OllamaTranslator:
             "images": [b64],
             "stream": False,
         }
-        res = requests.post(self.url, json=payload, timeout=30).json()
+        res = requests.post(
+            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
+        ).json()
         raw = res.get("response", "").strip()
         return self._parse_grounding_ocr(raw)
 

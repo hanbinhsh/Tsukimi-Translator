@@ -175,11 +175,11 @@ class TranslationThread(QThread):
 # ══════════════════════════════════════════════
 
 class OutlinedLabel(QLabel):
-    def __init__(self, text="", parent=None, color="#ffffff"):
+    def __init__(self, text="", parent=None, color="#ffffff", margins=(4, 4, 4, 4)):
         super().__init__(text, parent)
         self._text_color = QColor(color)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setContentsMargins(4, 4, 4, 4)
+        self.setContentsMargins(*margins)
 
     def setColor(self, hex_color: str):
         self._text_color = QColor(hex_color)
@@ -299,6 +299,7 @@ class TextOverlayWindow(QWidget):
         trans_color = self._cfg.get("trans_color", "#FFFFFF")
         show_orig   = self._cfg.get("show_ocr_text", False)
         ocr_color   = self._cfg.get("ocr_color", "#FFFF88")
+        min_box_h   = int(self._cfg.get("overlay_min_box_height", 28))
         show_debug_boxes = self._cfg.get("show_overlay_debug_boxes", False)
 
         for item in items:
@@ -308,7 +309,7 @@ class TextOverlayWindow(QWidget):
 
             lx1, ly1, lx2, ly2 = self._map_bbox_to_overlay(bbox, ocr_size)
             lw = max(lx2 - lx1, 10)
-            lh = max(ly2 - ly1, 10)
+            lh = max(ly2 - ly1, min_box_h)
 
             # 仅调试时显示模型原始框
             if show_debug_boxes:
@@ -328,7 +329,7 @@ class TextOverlayWindow(QWidget):
 
             # 若开启"显示原文"，在方块上方叠一行小字原文
             if show_orig and orig_text:
-                orig_lbl = OutlinedLabel(orig_text, self, color=ocr_color)
+                orig_lbl = OutlinedLabel(orig_text, self, color=ocr_color, margins=(1, 0, 1, 0))
                 orig_font = self._fit_font_size(orig_text, lw - 8, max(lh - 8, 10),
                                                 min_size=8, max_size=max(10, int(lh * 0.9)))
                 orig_lbl.setFont(QFont("Microsoft YaHei UI", orig_font))
@@ -339,7 +340,7 @@ class TextOverlayWindow(QWidget):
                 self._labels.append(orig_lbl)
 
             # 译文
-            trans_lbl = OutlinedLabel(trans_text, self, color=trans_color)
+            trans_lbl = OutlinedLabel(trans_text, self, color=trans_color, margins=(1, 0, 1, 0))
             trans_h = lh if show_orig else lh
             trans_y = ly1 + (lh if show_orig else 0)
             max_font = max(10, int(trans_h * (1.2 if show_orig else 1.0)))
@@ -951,24 +952,21 @@ class SettingInterface(ScrollArea):
         self.trans_color_btn = ColorButton("#FFFFFF")
         self.trans_color_card.addWidget(self.trans_color_btn)
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card):
+        self.overlay_min_h_card = CustomSettingCard(
+            FIF.TEXT,
+            "最小贴字文本框高度",
+            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
+            self.appear_group
+        )
+        self.overlay_min_h_spin = DoubleSpinBox()
+        self.overlay_min_h_spin.setRange(10, 200)
+        self.overlay_min_h_spin.setSingleStep(2)
+        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
+
+        for card in (self.show_ocr_card, self.ocr_color_card,
+                     self.trans_color_card, self.overlay_min_h_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
-
-        # ── AI 模型配置 ──
-        self.model_group = SettingCardGroup("AI 模型配置", self.view)
-
-        self.ocr_card = CustomSettingCard(FIF.CODE, "OCR 识别模型", "视觉模型，用于提取图片文字", self.model_group)
-        self.ocr_edit = LineEdit()
-        self.ocr_card.addWidget(self.ocr_edit)
-
-        self.llm_card = CustomSettingCard(FIF.CHAT, "LLM 翻译模型", "语言模型，用于文本润色", self.model_group)
-        self.llm_edit = LineEdit()
-        self.llm_card.addWidget(self.llm_edit)
-
-        self.model_group.addSettingCard(self.ocr_card)
-        self.model_group.addSettingCard(self.llm_card)
-        self.layout.addWidget(self.model_group)
 
         # ── 性能与策略 ──
         self.perf_group = SettingCardGroup("性能与策略", self.view)
@@ -1120,6 +1118,55 @@ class HomeInterface(ScrollArea):
         return QApplication.primaryScreen()
 
 
+class AISettingInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("aiSettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.ocr_group = SettingCardGroup("OCR 配置", self.view)
+        self.ocr_model_card = CustomSettingCard(FIF.CODE, "OCR 识别模型", "视觉模型，用于提取图片文字", self.ocr_group)
+        self.ocr_model_edit = LineEdit()
+        self.ocr_model_card.addWidget(self.ocr_model_edit)
+
+        self.ocr_api_card = CustomSettingCard(FIF.LINK, "OCR API", "默认本地 Ollama /api/generate", self.ocr_group)
+        self.ocr_api_edit = LineEdit()
+        self.ocr_api_card.addWidget(self.ocr_api_edit)
+
+        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_edit = LineEdit()
+        self.ocr_key_card.addWidget(self.ocr_key_edit)
+
+        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card):
+            self.ocr_group.addSettingCard(card)
+        self.layout.addWidget(self.ocr_group)
+
+        self.llm_group = SettingCardGroup("LLM 配置", self.view)
+        self.llm_model_card = CustomSettingCard(FIF.CHAT, "LLM 翻译模型", "语言模型，用于文本润色", self.llm_group)
+        self.llm_model_edit = LineEdit()
+        self.llm_model_card.addWidget(self.llm_model_edit)
+
+        self.llm_api_card = CustomSettingCard(FIF.LINK, "LLM API", "默认本地 Ollama /api/generate", self.llm_group)
+        self.llm_api_edit = LineEdit()
+        self.llm_api_card.addWidget(self.llm_api_edit)
+
+        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_edit = LineEdit()
+        self.llm_key_card.addWidget(self.llm_key_edit)
+
+        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card):
+            self.llm_group.addSettingCard(card)
+        self.layout.addWidget(self.llm_group)
+
+        self.layout.addStretch(1)
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+
 class DebugInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -1164,10 +1211,12 @@ class MainWindow(FluentWindow):
 
         self.home_page    = HomeInterface(self)
         self.setting_page = SettingInterface(self)
+        self.ai_page      = AISettingInterface(self)
         self.debug_page   = DebugInterface(self)
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
+        self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.debug_page,   FIF.DEVELOPER_TOOLS, "调试")
 
         self.load_settings()
@@ -1219,9 +1268,14 @@ class MainWindow(FluentWindow):
         s.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
         s.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         s.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
+        s.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
 
-        s.ocr_edit.setText(self.cfg.get("ocr_model", ""))
-        s.llm_edit.setText(self.cfg.get("llm_model", ""))
+        self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
+        self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
+        self.ai_page.ocr_key_edit.setText(self.cfg.get("ocr_key", ""))
+        self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
+        self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
+        self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
         s.scale_spin.setValue(self.cfg.get("scale_factor", 0.5))
         s.sw_stream.setChecked(self.cfg.get("use_stream", False))
         s.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
@@ -1264,8 +1318,13 @@ class MainWindow(FluentWindow):
             "show_ocr_text":       s.sw_show_ocr.isChecked(),
             "ocr_color":           s.ocr_color_btn.color(),
             "trans_color":         s.trans_color_btn.color(),
-            "ocr_model":           s.ocr_edit.text(),
-            "llm_model":           s.llm_edit.text(),
+            "overlay_min_box_height": int(s.overlay_min_h_spin.value()),
+            "ocr_model":           self.ai_page.ocr_model_edit.text(),
+            "ocr_api":             self.ai_page.ocr_api_edit.text(),
+            "ocr_key":             self.ai_page.ocr_key_edit.text(),
+            "llm_model":           self.ai_page.llm_model_edit.text(),
+            "llm_api":             self.ai_page.llm_api_edit.text(),
+            "llm_key":             self.ai_page.llm_key_edit.text(),
             "scale_factor":        s.scale_spin.value(),
             "use_stream":          s.sw_stream.isChecked(),
             "use_ocr":             s.sw_ocr.isChecked(),
