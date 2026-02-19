@@ -1563,7 +1563,7 @@ class AboutInterface(ScrollArea):
         self.author_url = "https://github.com/hanbinhsh"
         self.current_version = "0.1"
 
-        self.version_card = CustomSettingCard(FIF.TAG, "当前版本", "0.1", self.info_group)
+        self.version_card = CustomSettingCard(FIF.TAG, "当前版本", f"v{self.current_version}", self.info_group)
         self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "IceRinne aka. hanbinhsh", self.info_group)
         self.avatar = AvatarLabel(36, self)
         self.avatar.set_url(self.author_url)
