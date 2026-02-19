@@ -1792,7 +1792,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
-        self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+        self.addSubInterface(self.overlay_page, FIF.BRUSH,   "字幕设置")
         self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
