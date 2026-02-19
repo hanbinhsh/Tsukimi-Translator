@@ -2,7 +2,8 @@ import sys
 import time
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                                QLabel, QLayout, QPushButton, QColorDialog, QFrame)
+                                QLabel, QLayout, QPushButton, QColorDialog, QFrame,
+                                QMessageBox)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics)
 from shiboken6 import isValid
@@ -988,37 +989,6 @@ class SettingInterface(ScrollArea):
             self.win_group.addSettingCard(card)
         self.layout.addWidget(self.win_group)
 
-        # ── 字幕外观 ──
-        self.appear_group = SettingCardGroup("字幕外观", self.view)
-
-        self.show_ocr_card = CustomSettingCard(FIF.LABEL, "同时显示 OCR 原文", "在译文上方显示提取的原始文字", self.appear_group)
-        self.sw_show_ocr = SwitchButton()
-        self.show_ocr_card.addWidget(self.sw_show_ocr)
-
-        self.ocr_color_card = CustomSettingCard(FIF.PALETTE, "原文颜色", "OCR 原文的文字颜色", self.appear_group)
-        self.ocr_color_btn = ColorButton("#FFFF88")
-        self.ocr_color_card.addWidget(self.ocr_color_btn)
-
-        self.trans_color_card = CustomSettingCard(FIF.FONT, "译文颜色", "翻译结果的文字颜色", self.appear_group)
-        self.trans_color_btn = ColorButton("#FFFFFF")
-        self.trans_color_card.addWidget(self.trans_color_btn)
-
-        self.overlay_min_h_card = CustomSettingCard(
-            FIF.BACK_TO_WINDOW,
-            "最小贴字文本框高度",
-            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
-            self.appear_group
-        )
-        self.overlay_min_h_spin = DoubleSpinBox()
-        self.overlay_min_h_spin.setRange(10, 200)
-        self.overlay_min_h_spin.setSingleStep(2)
-        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
-
-        for card in (self.show_ocr_card, self.ocr_color_card,
-                     self.trans_color_card, self.overlay_min_h_card):
-            self.appear_group.addSettingCard(card)
-        self.layout.addWidget(self.appear_group)
-
         # ── 性能与策略 ──
         self.perf_group = SettingCardGroup("性能与策略", self.view)
 
@@ -1047,13 +1017,6 @@ class SettingInterface(ScrollArea):
                      self.llm_sw_card, self.copy_sw_card):
             self.perf_group.addSettingCard(card)
         self.layout.addWidget(self.perf_group)
-
-        # ── Prompt ──
-        self.layout.addSpacing(10)
-        self.layout.addWidget(SubtitleLabel("自定义翻译指令 (Prompt)", self.view))
-        self.prompt_edit = TextEdit(self.view)
-        self.prompt_edit.setFixedHeight(100)
-        self.layout.addWidget(self.prompt_edit)
 
         self.layout.addStretch(1)
 
@@ -1176,11 +1139,16 @@ class AISettingInterface(ScrollArea):
         self.ocr_api_edit = LineEdit()
         self.ocr_api_card.addWidget(self.ocr_api_edit)
 
-        self.ocr_key_card = CustomSettingCard(FIF.FINGERPRINT, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
-        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card):
+        self.ocr_prompt_card = CustomSettingCard(FIF.CAMERA, "OCR 提示词", "普通 OCR 指令（贴字模式不使用）", self.ocr_group)
+        self.ocr_prompt_edit = TextEdit()
+        self.ocr_prompt_edit.setFixedHeight(90)
+        self.ocr_prompt_card.addWidget(self.ocr_prompt_edit)
+
+        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card, self.ocr_prompt_card):
             self.ocr_group.addSettingCard(card)
         self.layout.addWidget(self.ocr_group)
 
@@ -1193,11 +1161,16 @@ class AISettingInterface(ScrollArea):
         self.llm_api_edit = LineEdit()
         self.llm_api_card.addWidget(self.llm_api_edit)
 
-        self.llm_key_card = CustomSettingCard(FIF.FINGERPRINT, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
-        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card):
+        self.llm_prompt_card = CustomSettingCard(FIF.EDIT, "LLM 提示词", "翻译与润色指令", self.llm_group)
+        self.llm_prompt_edit = TextEdit()
+        self.llm_prompt_edit.setFixedHeight(110)
+        self.llm_prompt_card.addWidget(self.llm_prompt_edit)
+
+        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card, self.llm_prompt_card):
             self.llm_group.addSettingCard(card)
         self.layout.addWidget(self.llm_group)
 
@@ -1215,6 +1188,35 @@ class OverlaySettingInterface(ScrollArea):
         self.layout = QVBoxLayout(self.view)
         self.layout.setContentsMargins(30, 20, 30, 20)
         self.layout.setSpacing(15)
+
+        self.appear_group = SettingCardGroup("字幕外观", self.view)
+
+        self.show_ocr_card = CustomSettingCard(FIF.LABEL, "同时显示 OCR 原文", "在译文上方显示提取的原始文字", self.appear_group)
+        self.sw_show_ocr = SwitchButton()
+        self.show_ocr_card.addWidget(self.sw_show_ocr)
+
+        self.ocr_color_card = CustomSettingCard(FIF.PALETTE, "原文颜色", "OCR 原文的文字颜色", self.appear_group)
+        self.ocr_color_btn = ColorButton("#FFFF88")
+        self.ocr_color_card.addWidget(self.ocr_color_btn)
+
+        self.trans_color_card = CustomSettingCard(FIF.FONT, "译文颜色", "翻译结果的文字颜色", self.appear_group)
+        self.trans_color_btn = ColorButton("#FFFFFF")
+        self.trans_color_card.addWidget(self.trans_color_btn)
+
+        self.overlay_min_h_card = CustomSettingCard(
+            FIF.TEXT,
+            "最小贴字文本框高度",
+            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
+            self.appear_group
+        )
+        self.overlay_min_h_spin = DoubleSpinBox()
+        self.overlay_min_h_spin.setRange(10, 200)
+        self.overlay_min_h_spin.setSingleStep(2)
+        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
+
+        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.overlay_min_h_card):
+            self.appear_group.addSettingCard(card)
+        self.layout.addWidget(self.appear_group)
 
         self.overlay_group = SettingCardGroup("贴字设置", self.view)
 
@@ -1246,7 +1248,7 @@ class OverlaySettingInterface(ScrollArea):
         self.sw_auto_merge_card.addWidget(self.sw_auto_merge)
 
         self.min_line_h_card = CustomSettingCard(
-            FIF.BACK_TO_WINDOW,
+            FIF.TEXT,
             "最小换行高度",
             "小于该高度的文本框会被视作可拼接行",
             self.overlay_group
@@ -1312,14 +1314,14 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
 
-        # 右侧页面固定操作条（类似固定首行）
+        # 右侧页面固定底部操作条
         self._content_host = self.stackedWidget if hasattr(self, "stackedWidget") else self
         self.top_action_bar = QFrame(self._content_host)
         self.top_action_bar.setObjectName("topActionBar")
         self.top_action_bar.setStyleSheet(
             "#topActionBar {"
             "background: transparent;"
-            "border-bottom: 1px solid rgba(120,120,120,0.35);"
+            "border-top: 1px solid rgba(120,120,120,0.35);"
             "}"
         )
         self.top_action_layout = QHBoxLayout(self.top_action_bar)
@@ -1329,17 +1331,21 @@ class MainWindow(FluentWindow):
 
         self.start_nav_btn = PrimaryPushButton("启动翻译", self.top_action_bar)
         self.save_nav_btn = PushButton("保存设置", self.top_action_bar)
+        self.reset_nav_btn = PushButton("重置设置", self.top_action_bar)
         self.start_nav_btn.setFixedWidth(140)
         self.save_nav_btn.setFixedWidth(140)
+        self.reset_nav_btn.setFixedWidth(110)
+        self.top_action_layout.addWidget(self.reset_nav_btn)
         self.top_action_layout.addWidget(self.save_nav_btn)
         self.top_action_layout.addWidget(self.start_nav_btn)
 
         self.start_nav_btn.clicked.connect(self.toggle_overlay)
         self.save_nav_btn.clicked.connect(self.save_all)
+        self.reset_nav_btn.clicked.connect(self.reset_all_settings)
 
-        # 给右侧各页面预留顶部固定栏空间，滚动内容从其下方开始
+        # 给右侧各页面预留底部固定栏空间，滚动内容在其上方结束
         for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page):
-            page.setViewportMargins(0, 52, 0, 0)
+            page.setViewportMargins(0, 0, 0, 52)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1355,15 +1361,17 @@ class MainWindow(FluentWindow):
         self.home_page.refresh_btn.clicked.connect(self.refresh_windows)
         self.home_page.region_btn.clicked.connect(self.open_region_selector)
         self.home_page.clear_region_btn.clicked.connect(self.clear_region)
+        self.stackedWidget.currentChanged.connect(self._on_page_changed)
 
         self.refresh_windows()
         self.overlay = None
         self._layout_top_action_bar()
         self._refresh_start_button_style()
+        self._on_page_changed(self.stackedWidget.currentIndex())
 
     def _layout_top_action_bar(self):
         bar_h = 52
-        self.top_action_bar.setGeometry(0, 0, self._content_host.width(), bar_h)
+        self.top_action_bar.setGeometry(0, self._content_host.height() - bar_h, self._content_host.width(), bar_h)
         self.top_action_bar.raise_()
 
     def resizeEvent(self, event):
@@ -1384,6 +1392,33 @@ class MainWindow(FluentWindow):
                 "QPushButton{background:#0e9f6e;color:white;border-radius:6px;padding:6px 12px;}"
                 "QPushButton:hover{background:#13b87f;}"
             )
+
+    def _on_page_changed(self, index: int):
+        page = self.stackedWidget.widget(index)
+        show_save = page in (self.setting_page, self.ai_page, self.overlay_page)
+        self.save_nav_btn.setVisible(show_save)
+        self.reset_nav_btn.setVisible(show_save)
+
+    def reset_all_settings(self):
+        ret = QMessageBox.question(
+            self,
+            "确认重置",
+            "确定要重置所有设置吗？该操作会立即覆盖当前配置。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if ret != QMessageBox.Yes:
+            return
+        from config_manager import DEFAULT_CONFIG
+        self.cfg = DEFAULT_CONFIG.copy()
+        save_config(self.cfg)
+        self.load_settings()
+        if self.overlay:
+            self.overlay.cfg = self.cfg
+            self.overlay.update_window_flags()
+            self.overlay.apply_mode()
+            self.overlay.update_layout_settings()
+        InfoBar.success("已重置", "所有设置已恢复默认值", parent=self)
 
     # ── 设置加载 ──
 
@@ -1411,23 +1446,37 @@ class MainWindow(FluentWindow):
         s.sw_visible.setChecked(self.cfg.get("window_visible", True))
         s.sw_top.setChecked(self.cfg.get("always_on_top", True))
 
-        s.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
-        s.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
-        s.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
-        s.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
-
         self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
         self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
         self.ai_page.ocr_key_edit.setText(self.cfg.get("ocr_key", ""))
+        self.ai_page.ocr_prompt_edit.setText(self.cfg.get("ocr_prompt", ""))
         self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
         self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
         self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
+        self.ai_page.llm_prompt_edit.setText(self.cfg.get("llm_prompt", ""))
         s.scale_spin.setValue(self.cfg.get("scale_factor", 0.5))
         s.sw_stream.setChecked(self.cfg.get("use_stream", False))
         s.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
         s.sw_llm.setChecked(self.cfg.get("use_llm", True))
         s.sw_copy.setChecked(self.cfg.get("auto_copy", False))
-        s.prompt_edit.setText(self.cfg.get("llm_prompt", ""))
+
+        self.overlay_page.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
+        self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
+        self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
+        self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
+        self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
+        self.overlay_page.sw_overlay_boxes.setChecked(
+            self.cfg.get("show_overlay_debug_boxes", False)
+        )
+        self.overlay_page.sw_auto_merge.setChecked(
+            self.cfg.get("overlay_auto_merge_lines", False)
+        )
+        self.overlay_page.min_line_h_spin.setValue(
+            self.cfg.get("overlay_min_line_height", 40)
+        )
+        self.overlay_page.joiner_edit.setText(
+            self.cfg.get("overlay_joiner", " ")
+        )
 
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         self.overlay_page.sw_overlay_boxes.setChecked(
@@ -1470,13 +1519,14 @@ class MainWindow(FluentWindow):
             "auto_hide":           s.sw_hide.isChecked(),
             "window_visible":      s.sw_visible.isChecked(),
             "always_on_top":       s.sw_top.isChecked(),
-            "show_ocr_text":       s.sw_show_ocr.isChecked(),
-            "ocr_color":           s.ocr_color_btn.color(),
-            "trans_color":         s.trans_color_btn.color(),
-            "overlay_min_box_height": int(s.overlay_min_h_spin.value()),
+            "show_ocr_text":       self.overlay_page.sw_show_ocr.isChecked(),
+            "ocr_color":           self.overlay_page.ocr_color_btn.color(),
+            "trans_color":         self.overlay_page.trans_color_btn.color(),
+            "overlay_min_box_height": int(self.overlay_page.overlay_min_h_spin.value()),
             "ocr_model":           self.ai_page.ocr_model_edit.text(),
             "ocr_api":             self.ai_page.ocr_api_edit.text(),
             "ocr_key":             self.ai_page.ocr_key_edit.text(),
+            "ocr_prompt":          self.ai_page.ocr_prompt_edit.toPlainText(),
             "llm_model":           self.ai_page.llm_model_edit.text(),
             "llm_api":             self.ai_page.llm_api_edit.text(),
             "llm_key":             self.ai_page.llm_key_edit.text(),
@@ -1490,7 +1540,7 @@ class MainWindow(FluentWindow):
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
             "overlay_joiner": self.overlay_page.joiner_edit.text(),
-            "llm_prompt":          s.prompt_edit.toPlainText(),
+            "llm_prompt":          self.ai_page.llm_prompt_edit.toPlainText(),
             "target_hwnd":         self.home_page.combo.currentData(),
             "capture_screen_name": self.home_page.screen_combo.currentData() or "",
         })

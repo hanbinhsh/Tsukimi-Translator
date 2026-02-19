@@ -30,7 +30,10 @@ class OllamaTranslator:
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self.cfg["ocr_model"],
-            "prompt": "Extract all text from this image. Output only the text content, no explanations.",
+            "prompt": self.cfg.get(
+                "ocr_prompt",
+                "Extract all text from this image. Output only the text content, no explanations."
+            ),
             "images": [b64],
             "stream": False,
         }
