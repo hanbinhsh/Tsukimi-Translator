@@ -42,6 +42,9 @@ DEFAULT_CONFIG = {
     "overlay_auto_merge_lines": False, # 自动识别换行并拼接
     "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
     "overlay_joiner": " ",           # 拼接字符（中日文可设为空）
+    "remove_blank_lines": False,      # 自动移除翻译文本框中的空行
+    "line_start_chars": ",.;:!?)]}、，。！？；：」』）】》",  # 下一行若以这些字符开头则判定为续句
+    "line_end_chars": ".!?。！？…",  # 上一行若以这些字符结尾则判定为一句结束
 
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
