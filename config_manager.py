@@ -12,7 +12,9 @@ DEFAULT_CONFIG = {
     "llm_api": "http://localhost:11434/api/generate",
     "llm_key": "",
     "ocr_prompt": "Extract all text from this image. Output only the text content, no explanations.",
-    "overlay_ocr_prompt": "<|grounding|>OCR the image.",
+    "overlay_ocr_prompt": "\\n<|grounding|>OCR the image.",
+    "ocr_context_length": 8192,
+    "llm_context_length": 8192,
     "ocr_image_format": "PNG",   # OCR 上传图片编码：PNG(无损) / JPEG
     "ocr_image_quality": 95,       # JPEG 编码质量（仅 JPEG 生效）
     "use_ocr": True,
@@ -44,6 +46,7 @@ DEFAULT_CONFIG = {
     "overlay_min_box_height": 28,    # 贴字文本框最小高度
     "overlay_auto_merge_lines": False, # 自动识别换行并拼接
     "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
+    "overlay_max_line_gap": 4,       # 相邻文本框间距小于该值时可拼接
     "overlay_joiner": " ",           # 拼接字符（中日文可设为空）
     "remove_blank_lines": False,      # 自动移除翻译文本框中的空行
     "line_start_chars": ",.;:!?)]}、，。！？；：」』）】》",  # 下一行若以这些字符开头则判定为续句

@@ -1,11 +1,12 @@
 import sys
 import time
+from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QColorDialog, QFrame,
                                 QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
-                           QFont, QPainterPath, QFontMetrics)
+                           QFont, QPainterPath, QFontMetrics, QIcon)
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
@@ -32,6 +33,25 @@ def get_seg_key(seg_widget, default=""):
             if v == current:
                 return k
     return default
+
+
+def load_app_icon() -> QIcon:
+    """优先加载项目中的 logo 图标（ico/svg），用于标题栏与任务栏。"""
+    base = Path(__file__).resolve().parent
+    candidates = [
+        base / "logo.ico",
+        base / "logo.svg",
+        base / "assets" / "logo.ico",
+        base / "assets" / "logo.svg",
+        base / "icons" / "logo.ico",
+        base / "icons" / "logo.svg",
+    ]
+    for p in candidates:
+        if p.exists():
+            icon = QIcon(str(p))
+            if not icon.isNull():
+                return icon
+    return FIF.LANGUAGE.icon()
 
 
 # ══════════════════════════════════════════════
@@ -192,6 +212,7 @@ class TranslationThread(QThread):
     def _merge_overlay_lines(
         items: list,
         min_height: int,
+        max_line_gap: int,
         joiner: str,
         line_start_chars: str,
         line_end_chars: str,
@@ -221,7 +242,8 @@ class TranslationThread(QThread):
             min_width = max(1, min(cx2 - cx1, x2 - x1))
             overlap_ratio = horizontal_overlap / min_width
 
-            near_line = vertical_gap <= max(4, int(min_height * 0.8)) and overlap_ratio >= 0.2
+            gap_limit = max(0, int(max_line_gap))
+            near_line = vertical_gap <= gap_limit and overlap_ratio >= 0.2
             continuation = TranslationThread._looks_like_sentence_continuation(
                 current.get("text", ""),
                 item.get("text", ""),
@@ -266,6 +288,7 @@ class TranslationThread(QThread):
                         items = self._merge_overlay_lines(
                             items,
                             int(self.config.get("overlay_min_line_height", 40)),
+                            int(self.config.get("overlay_max_line_gap", 4)),
                             self.config.get("overlay_joiner", " "),
                             self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
                             self.config.get("line_end_chars", ".!?。！？…"),
@@ -1275,12 +1298,19 @@ class AISettingInterface(ScrollArea):
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
+        self.ocr_ctx_card = CustomSettingCard(FIF.DICTIONARY, "OCR 上下文长度", "请求参数 num_ctx（0 表示使用模型默认）", self.ocr_group)
+        self.ocr_ctx_spin = DoubleSpinBox()
+        self.ocr_ctx_spin.setRange(0, 131072)
+        self.ocr_ctx_spin.setSingleStep(512)
+        self.ocr_ctx_spin.setDecimals(0)
+        self.ocr_ctx_card.addWidget(self.ocr_ctx_spin)
+
         self.ocr_prompt_card = PromptSettingCard(
             FIF.CAMERA, "OCR 提示词", "普通 OCR 指令（贴字模式不使用）", 90, self.ocr_group
         )
         self.ocr_prompt_edit = self.ocr_prompt_card.editor
 
-        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card, self.ocr_prompt_card):
+        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card, self.ocr_ctx_card, self.ocr_prompt_card):
             self.ocr_group.addSettingCard(card)
         self.layout.addWidget(self.ocr_group)
 
@@ -1297,12 +1327,19 @@ class AISettingInterface(ScrollArea):
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
+        self.llm_ctx_card = CustomSettingCard(FIF.DICTIONARY, "LLM 上下文长度", "请求参数 num_ctx（0 表示使用模型默认）", self.llm_group)
+        self.llm_ctx_spin = DoubleSpinBox()
+        self.llm_ctx_spin.setRange(0, 131072)
+        self.llm_ctx_spin.setSingleStep(512)
+        self.llm_ctx_spin.setDecimals(0)
+        self.llm_ctx_card.addWidget(self.llm_ctx_spin)
+
         self.llm_prompt_card = PromptSettingCard(
             FIF.EDIT, "LLM 提示词", "翻译与润色指令", 110, self.llm_group
         )
         self.llm_prompt_edit = self.llm_prompt_card.editor
 
-        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card, self.llm_prompt_card):
+        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card, self.llm_ctx_card, self.llm_prompt_card):
             self.llm_group.addSettingCard(card)
         self.layout.addWidget(self.llm_group)
 
@@ -1352,6 +1389,15 @@ class OverlaySettingInterface(ScrollArea):
         self.sw_overlay_ocr = SwitchButton()
         self.sw_overlay_card.addWidget(self.sw_overlay_ocr)
 
+        self.overlay_prompt_card = PromptSettingCard(
+            FIF.CAMERA,
+            "贴字 OCR 提示词",
+            "用于带坐标 OCR；去掉提示词中的 \\n 可让模型尽量按行输出",
+            90,
+            self.overlay_group
+        )
+        self.overlay_prompt_edit = self.overlay_prompt_card.editor
+
         self.overlay_min_h_card = CustomSettingCard(
             FIF.BACK_TO_WINDOW,
             "最小贴字文本框高度",
@@ -1392,6 +1438,18 @@ class OverlaySettingInterface(ScrollArea):
         self.min_line_h_spin.setSingleStep(1)
         self.min_line_h_card.addWidget(self.min_line_h_spin)
 
+        self.max_line_gap_card = CustomSettingCard(
+            FIF.ALIGNMENT,
+            "可拼接框间距（高度）",
+            "若上下两个框的间距小于该值 (px)，则可被视作同一句",
+            self.overlay_group
+        )
+        self.max_line_gap_spin = DoubleSpinBox()
+        self.max_line_gap_spin.setRange(0, 300)
+        self.max_line_gap_spin.setSingleStep(1)
+        self.max_line_gap_spin.setDecimals(0)
+        self.max_line_gap_card.addWidget(self.max_line_gap_spin)
+
         self.joiner_card = CustomSettingCard(
             FIF.FONT,
             "拼接字符",
@@ -1421,9 +1479,11 @@ class OverlaySettingInterface(ScrollArea):
 
         for card in (
             self.sw_overlay_card,
+            self.overlay_prompt_card,
             self.sw_debug_box_card,
             self.sw_auto_merge_card,
             self.min_line_h_card,
+            self.max_line_gap_card,
             self.joiner_card,
             self.line_start_chars_card,
             self.line_end_chars_card,
@@ -1443,6 +1503,7 @@ class OverlaySettingInterface(ScrollArea):
 
     def _sync_merge_controls(self, checked: bool):
         self.min_line_h_card.setVisible(checked)
+        self.max_line_gap_card.setVisible(checked)
         self.joiner_card.setVisible(checked)
         self.line_start_chars_card.setVisible(checked)
         self.line_end_chars_card.setVisible(checked)
@@ -1456,9 +1517,10 @@ class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
         self.cfg = load_config()
+        self.app_icon = load_app_icon()
         setTheme(Theme.DARK)
         self.setWindowTitle("Tsukimi Translator")
-        self.setWindowIcon(FIF.LANGUAGE.icon())
+        self.setWindowIcon(self.app_icon)
         self.resize(820, 820)
 
         self.home_page    = HomeInterface(self)
@@ -1606,10 +1668,12 @@ class MainWindow(FluentWindow):
         self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
         self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
         self.ai_page.ocr_key_edit.setText(self.cfg.get("ocr_key", ""))
+        self.ai_page.ocr_ctx_spin.setValue(self.cfg.get("ocr_context_length", 8192))
         self.ai_page.ocr_prompt_edit.setText(self.cfg.get("ocr_prompt", ""))
         self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
         self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
         self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
+        self.ai_page.llm_ctx_spin.setValue(self.cfg.get("llm_context_length", 8192))
         self.ai_page.llm_prompt_edit.setText(self.cfg.get("llm_prompt", ""))
         s.scale_spin.setValue(self.cfg.get("scale_factor", 0.5))
         s.sw_stream.setChecked(self.cfg.get("use_stream", False))
@@ -1623,6 +1687,9 @@ class MainWindow(FluentWindow):
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
+        self.overlay_page.overlay_prompt_edit.setText(
+            self.cfg.get("overlay_ocr_prompt", "\n<|grounding|>OCR the image.")
+        )
         self.overlay_page.sw_overlay_boxes.setChecked(
             self.cfg.get("show_overlay_debug_boxes", False)
         )
@@ -1631,6 +1698,9 @@ class MainWindow(FluentWindow):
         )
         self.overlay_page.min_line_h_spin.setValue(
             self.cfg.get("overlay_min_line_height", 40)
+        )
+        self.overlay_page.max_line_gap_spin.setValue(
+            self.cfg.get("overlay_max_line_gap", 4)
         )
         self.overlay_page.joiner_edit.setText(
             self.cfg.get("overlay_joiner", " ")
@@ -1676,10 +1746,12 @@ class MainWindow(FluentWindow):
             "ocr_model":           self.ai_page.ocr_model_edit.text(),
             "ocr_api":             self.ai_page.ocr_api_edit.text(),
             "ocr_key":             self.ai_page.ocr_key_edit.text(),
+            "ocr_context_length":  int(self.ai_page.ocr_ctx_spin.value()),
             "ocr_prompt":          self.ai_page.ocr_prompt_edit.toPlainText(),
             "llm_model":           self.ai_page.llm_model_edit.text(),
             "llm_api":             self.ai_page.llm_api_edit.text(),
             "llm_key":             self.ai_page.llm_key_edit.text(),
+            "llm_context_length":  int(self.ai_page.llm_ctx_spin.value()),
             "scale_factor":        s.scale_spin.value(),
             "use_stream":          s.sw_stream.isChecked(),
             "use_ocr":             s.sw_ocr.isChecked(),
@@ -1689,7 +1761,9 @@ class MainWindow(FluentWindow):
             "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
+            "overlay_ocr_prompt": self.overlay_page.overlay_prompt_edit.toPlainText(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
+            "overlay_max_line_gap": int(self.overlay_page.max_line_gap_spin.value()),
             "overlay_joiner": self.overlay_page.joiner_edit.text(),
             "line_start_chars": self.overlay_page.line_start_chars_edit.text(),
             "line_end_chars": self.overlay_page.line_end_chars_edit.text(),
@@ -1794,6 +1868,7 @@ if __name__ == "__main__":
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
+    app.setWindowIcon(load_app_icon())
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
