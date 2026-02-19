@@ -1,18 +1,26 @@
 import sys
 import time
 from pathlib import Path
+<<<<<<< codex/add-ocr-model-settings-nitj9v
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
+=======
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
+>>>>>>> main
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QColorDialog, QFrame,
                                 QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
+<<<<<<< codex/add-ocr-model-settings-nitj9v
+                           QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices)
+=======
                            QFont, QPainterPath, QFontMetrics, QIcon)
+>>>>>>> main
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
-                             MessageBox)
+                             MessageBox, NavigationItemPosition)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -1509,6 +1517,66 @@ class OverlaySettingInterface(ScrollArea):
         self.line_end_chars_card.setVisible(checked)
 
 
+class AboutInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("aboutInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.info_group = SettingCardGroup("关于", self.view)
+
+        self.name_card = CustomSettingCard(FIF.INFO, "应用名称", "Tsukimi Translator", self.info_group)
+        self.version_card = CustomSettingCard(FIF.TAG, "当前版本", "0.1", self.info_group)
+        self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "Tsukimi Translator Contributors", self.info_group)
+
+        self.repo_card = CustomSettingCard(
+            FIF.LINK,
+            "仓库链接",
+            "https://github.com/hanbinhsh/Tsukimi-Translator",
+            self.info_group,
+        )
+        self.repo_btn = PushButton(FIF.SHARE, "打开仓库")
+        self.repo_btn.clicked.connect(self.open_repo)
+        self.repo_card.addWidget(self.repo_btn)
+
+        self.update_card = CustomSettingCard(FIF.UPDATE, "检查更新", "点击检查是否有新版本", self.info_group)
+        self.update_btn = PrimaryPushButton("检查更新")
+        self.update_btn.clicked.connect(self.check_update)
+        self.update_card.addWidget(self.update_btn)
+
+        for card in (
+            self.name_card,
+            self.version_card,
+            self.author_card,
+            self.repo_card,
+            self.update_card,
+        ):
+            self.info_group.addSettingCard(card)
+
+        self.layout.addWidget(self.info_group)
+        self.layout.addStretch(1)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+        self.repo_url = "https://github.com/hanbinhsh/Tsukimi-Translator"
+        self.current_version = "0.1"
+
+    def open_repo(self):
+        QDesktopServices.openUrl(QUrl(self.repo_url))
+
+    def check_update(self):
+        InfoBar.info(
+            "检查更新",
+            f"当前版本 {self.current_version}，暂未配置在线更新源。",
+            parent=self,
+        )
+
+
 # ══════════════════════════════════════════════
 # 主窗口
 # ══════════════════════════════════════════════
@@ -1527,11 +1595,18 @@ class MainWindow(FluentWindow):
         self.setting_page = SettingInterface(self)
         self.ai_page      = AISettingInterface(self)
         self.overlay_page = OverlaySettingInterface(self)
+        self.about_page   = AboutInterface(self)
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+        self.addSubInterface(
+            self.about_page,
+            FIF.INFO,
+            "关于",
+            NavigationItemPosition.BOTTOM,
+        )
 
         # 右侧页面固定底部操作条
         self._content_host = self.stackedWidget if hasattr(self, "stackedWidget") else self
@@ -1563,7 +1638,7 @@ class MainWindow(FluentWindow):
         self.reset_nav_btn.clicked.connect(self.reset_all_settings)
 
         # 给右侧各页面预留底部固定栏空间，滚动内容在其上方结束
-        for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page):
+        for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page, self.about_page):
             page.setViewportMargins(0, 0, 0, 52)
 
         self.load_settings()
