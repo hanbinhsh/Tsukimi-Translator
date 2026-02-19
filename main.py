@@ -19,7 +19,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
                              CheckBox,
-                             MessageBox, NavigationItemPosition, ColorDialog)
+                             MessageBox, NavigationItemPosition, ColorDialog, ToggleToolButton)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
