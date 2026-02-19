@@ -43,7 +43,6 @@ DEFAULT_CONFIG = {
     "show_ocr_text": False,         # 是否同时显示 OCR 原文
     "ocr_color": "#FFFF88",         # OCR 原文颜色
     "trans_color": "#FFFFFF",       # 译文颜色
-    "ui_max_height": 0,              # 字幕文本框最大高度，0 表示不限制
     "overlay_min_box_height": 28,    # 贴字文本框最小高度
     "overlay_auto_merge_lines": False, # 自动识别换行并拼接
     "overlay_min_line_height": 40,   # 小于该高度的行参与拼接
@@ -57,8 +56,6 @@ DEFAULT_CONFIG = {
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
     "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "save_debug_images": False,         # 是否输出调试截图文件
-    "log_ocr_raw": False,               # 控制台打印 OCR 原始返回
-    "log_ocr_text": False,              # 控制台打印 OCR 输出全文
     "dev_tabs_unlocked": False,         # 关于页输入 ice 后解锁调试页/日志页
     "auto_copy": False,
 }

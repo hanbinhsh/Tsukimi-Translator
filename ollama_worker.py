@@ -25,7 +25,7 @@ class OllamaTranslator:
     # 独立方法（供 TranslationThread 分步调用）
     # ──────────────────────────────────────────
 
-    def run_ocr(self, image_bytes: bytes, return_raw: bool = False):
+    def run_ocr(self, image_bytes: bytes) -> str:
         """调用视觉模型提取图片中的文字，返回纯文本"""
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
@@ -43,11 +43,7 @@ class OllamaTranslator:
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
         ).json()
-        raw = res.get("response", "")
-        text = raw.strip()
-        if return_raw:
-            return text, raw
-        return text
+        return res.get("response", "").strip()
 
     def run_llm(self, text: str, image_bytes: bytes = None) -> str:
         """调用 LLM 进行翻译/润色（非流式），返回结果字符串"""
@@ -121,7 +117,7 @@ class OllamaTranslator:
     # 贴字模式：带坐标的 OCR
     # ──────────────────────────────────────────
 
-    def run_ocr_with_coords(self, image_bytes: bytes, return_raw: bool = False):
+    def run_ocr_with_coords(self, image_bytes: bytes) -> list:
         """
         调用 deepseek-ocr 类模型，返回带坐标的文本块列表。
         返回格式：[{"text": str, "bbox": [x1, y1, x2, y2]}, ...]
@@ -145,9 +141,10 @@ class OllamaTranslator:
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
         ).json()
         raw = res.get("response", "").strip()
+        print(f"[overlay_ocr 原始模型输出全文]\n{raw}\n[overlay_ocr 原始模型输出结束]")
         items = self._parse_grounding_ocr(raw)
-        if return_raw:
-            return items, raw
+        if not items:
+            print(f"[overlay_ocr] 原始模型输出:\n{raw}")
         return items
 
     @staticmethod
