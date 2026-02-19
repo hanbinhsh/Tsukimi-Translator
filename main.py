@@ -1,12 +1,16 @@
 import sys
 import os
 import time
+import re
+import copy
+import json
 from pathlib import Path
 import requests
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QFrame,
-                                QSizePolicy, QScrollArea)
+                                QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
+                                QHeaderView, QDialog, QAbstractItemView, QCheckBox)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
 from shiboken6 import isValid
@@ -72,6 +76,72 @@ def resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     # 本地开发时的原始目录
     return os.path.join(os.path.abspath("."), relative_path)
+
+def _normalize_rule_group(raw: dict, idx: int) -> dict:
+    rules = []
+    for ridx, r in enumerate(raw.get("rules", []) if isinstance(raw, dict) else []):
+        if not isinstance(r, dict):
+            continue
+        rules.append({
+            "name": str(r.get("name", f"规则{ridx + 1}")),
+            "pattern": str(r.get("pattern", "")),
+            "replacement": str(r.get("replacement", "")),
+            "regex": bool(r.get("regex", False)),
+            "case_sensitive": bool(r.get("case_sensitive", False)),
+            "whole_word": bool(r.get("whole_word", False)),
+            "enabled": bool(r.get("enabled", True)),
+        })
+    if not rules:
+        rules = [{
+            "name": "规则1",
+            "pattern": "",
+            "replacement": "",
+            "regex": False,
+            "case_sensitive": False,
+            "whole_word": False,
+            "enabled": True,
+        }]
+    return {
+        "name": str(raw.get("name", f"规则组{idx + 1}")) if isinstance(raw, dict) else f"规则组{idx + 1}",
+        "enabled": bool(raw.get("enabled", True)) if isinstance(raw, dict) else True,
+        "rules": rules,
+    }
+
+
+def normalize_rule_groups(groups) -> list[dict]:
+    out = []
+    if not isinstance(groups, list):
+        groups = []
+    for i, g in enumerate(groups):
+        out.append(_normalize_rule_group(g, i))
+    if not out:
+        out = [_normalize_rule_group({}, 0)]
+    return out
+
+
+def apply_rule_groups(text: str, groups: list[dict]) -> str:
+    result = text or ""
+    for group in normalize_rule_groups(groups):
+        if not group.get("enabled", True):
+            continue
+        for rule in group.get("rules", []):
+            if not rule.get("enabled", True):
+                continue
+            pattern = str(rule.get("pattern", ""))
+            if not pattern:
+                continue
+            replacement = str(rule.get("replacement", ""))
+            flags = 0 if rule.get("case_sensitive", False) else re.IGNORECASE
+            use_regex = bool(rule.get("regex", False))
+            whole_word = bool(rule.get("whole_word", False))
+            expr = pattern if use_regex else re.escape(pattern)
+            if whole_word:
+                expr = rf"\b(?:{expr})\b"
+            try:
+                result = re.sub(expr, replacement, result, flags=flags)
+            except re.error:
+                continue
+    return result
 
 # ══════════════════════════════════════════════
 # 信号桥 & 颜色按钮
@@ -380,6 +450,8 @@ class TranslationThread(QThread):
                             self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
                             self.config.get("line_end_chars", ".!?。！？…"),
                         )
+                    for it in items:
+                        it["text"] = apply_rule_groups(it.get("text", ""), self.config.get("ocr_rule_groups", []))
                     debug_info["ocr_text"] = "\n".join(it.get("text", "") for it in items)
                     self.ocr_ready.emit(debug_info["ocr_text"])
 
@@ -411,6 +483,7 @@ class TranslationThread(QThread):
                 ocr_text, ocr_raw = worker.run_ocr(self.image_bytes, return_raw=True)
                 debug_info["ocr_duration"] = time.perf_counter() - ocr_start
                 debug_info["ocr_raw"] = (ocr_raw or "")
+                ocr_text = apply_rule_groups(ocr_text, self.config.get("ocr_rule_groups", []))
                 debug_info["ocr_text"] = ocr_text
                 self.ocr_ready.emit(ocr_text)
 
@@ -567,6 +640,7 @@ class TextOverlayWindow(QWidget):
         ocr_color   = self._cfg.get("ocr_color", "#FFFF88")
         min_box_h   = int(self._cfg.get("overlay_min_box_height", 28))
         show_debug_boxes = self._cfg.get("show_overlay_debug_boxes", False)
+        overlay_alpha = int(self._cfg.get("overlay_opacity", 82) * 255 / 100)
 
         for item in items:
             bbox        = item["bbox"]           # [x1, y1, x2, y2] 0-1000
@@ -588,7 +662,7 @@ class TextOverlayWindow(QWidget):
             bg = QLabel(self)
             bg_h = lh * 2 if show_orig else lh
             bg.setGeometry(lx1, ly1, lw, bg_h)
-            bg.setStyleSheet("background: rgba(8,8,8,200); border-radius: 4px;")
+            bg.setStyleSheet(f"background: rgba(10,10,10,{overlay_alpha}); border-radius: 4px;")
             bg.show()
             # bg 作为普通 QLabel 不加入 _labels 列表（不需要颜色更新），
             # 但需要随本窗口清理 → 用父子关系自动管理
@@ -775,9 +849,42 @@ class SubtitleOverlay(QWidget):
         self.text_scroll.setWidgetResizable(True)
         self.text_scroll.setFrameShape(QFrame.NoFrame)
         self.text_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.text_scroll.setStyleSheet("background: transparent; border: none;")
+        self.text_scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+                margin: 2px 1px 2px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 120);
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 165);
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+                border: none;
+                height: 0;
+            }
+            """
+        )
 
         self.text_content = QWidget(self.text_scroll)
+        self.text_content.setAutoFillBackground(False)
+        self.text_content.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.text_content.setStyleSheet("background: transparent;")
+        self.text_scroll.viewport().setAutoFillBackground(False)
+        self.text_scroll.viewport().setStyleSheet("background: transparent;")
         self.text_layout = QVBoxLayout(self.text_content)
         self.text_layout.setContentsMargins(0, 0, 0, 0)
         self.text_layout.setSpacing(4)
@@ -811,13 +918,21 @@ class SubtitleOverlay(QWidget):
 
     # ── 窗口属性 ──
 
+    def _overlay_alpha(self) -> int:
+        percent = int(self.cfg.get("overlay_opacity", 82) or 82)
+        percent = max(10, min(100, percent))
+        return int(percent * 255 / 100)
+
     def update_window_flags(self):
         flags = Qt.FramelessWindowHint | Qt.Tool
         if self.cfg.get("always_on_top", True):
             flags |= Qt.WindowStaysOnTopHint
+        if self.cfg.get("click_through", False) and hasattr(Qt, "WindowTransparentForInput"):
+            flags |= Qt.WindowTransparentForInput
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(self.cfg.get("click_through", False)))
         if self.cfg.get("window_visible", True):
             self.show()
         else:
@@ -828,7 +943,7 @@ class SubtitleOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect(), 12, 12)
-        painter.fillPath(path, QColor(10, 10, 10, 210))
+        painter.fillPath(path, QColor(10, 10, 10, self._overlay_alpha()))
         painter.end()
 
     def showEvent(self, event):
@@ -900,12 +1015,16 @@ class SubtitleOverlay(QWidget):
 
     def _apply_text_max_height(self):
         max_h = int(self.cfg.get("ui_max_height", 0) or 0)
+        content_h = self.text_content.sizeHint().height()
+        target_h = content_h
         if max_h > 0:
+            target_h = min(content_h, max_h)
             self.text_scroll.setMaximumHeight(max_h)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         else:
             self.text_scroll.setMaximumHeight(16777215)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_scroll.setFixedHeight(max(1, target_h))
 
     def _get_capture_screen(self):
         name = self.cfg.get("capture_screen_name", "")
@@ -1123,10 +1242,19 @@ class SubtitleOverlay(QWidget):
 
     def on_overlay_ready(self, items: list):
         """贴字翻译：将带坐标的译文更新到屏幕浮层"""
+        processed_items = []
+        output_groups = self.cfg.get("output_rule_groups", [])
+        for it in items:
+            current = dict(it)
+            src = current.get("text", "")
+            dst = current.get("translated", src)
+            current["translated"] = apply_rule_groups(dst, output_groups)
+            processed_items.append(current)
+
         if self.text_overlay and isValid(self.text_overlay):
-            self.text_overlay.update_items(items, self._latest_ocr_image_size)
+            self.text_overlay.update_items(processed_items, self._latest_ocr_image_size)
         overlay_lines = []
-        for idx, it in enumerate(items, start=1):
+        for idx, it in enumerate(processed_items, start=1):
             src = it.get("text", "")
             dst = it.get("translated", src)
             overlay_lines.append(f"{dst}")
@@ -1181,12 +1309,15 @@ class SubtitleOverlay(QWidget):
         result = text or ""
         if self.cfg.get("remove_blank_lines", False):
             result = self._remove_blank_lines(result)
+        result = apply_rule_groups(result, self.cfg.get("output_rule_groups", []))
         return result
 
     def _adjust_size(self):
         """调整大小前锁定底部锚点（向上扩展模式）"""
         if self.cfg.get("grow_direction", "up") == "up":
             self._bottom_anchor = self.y() + self.height()
+        self.text_content.adjustSize()
+        self._apply_text_max_height()
         self.adjustSize()
 
     # ── 拖拽移动 ──
@@ -1274,8 +1405,17 @@ class SettingInterface(ScrollArea):
         self.sw_top = SwitchButton()
         self.top_card.addWidget(self.sw_top)
 
+        self.click_through_card = CustomSettingCard(
+            FIF.CANCEL,
+            "对话框点击穿透",
+            "开启后鼠标可穿透悬浮字幕，直接点击后方窗口",
+            self.win_group
+        )
+        self.sw_click_through = SwitchButton()
+        self.click_through_card.addWidget(self.sw_click_through)
+
         for card in (self.width_card, self.grow_card, self.hide_card,
-                     self.visible_card, self.top_card):
+                     self.visible_card, self.top_card, self.click_through_card):
             self.win_group.addSettingCard(card)
         self.layout.addWidget(self.win_group)
 
@@ -1540,7 +1680,19 @@ class OverlaySettingInterface(ScrollArea):
         self.max_height_spin.setDecimals(0)
         self.max_height_card.addWidget(self.max_height_spin)
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.max_height_card):
+        self.opacity_card = CustomSettingCard(
+            FIF.BRUSH,
+            "对话框透明度",
+            "控制悬浮字幕与文字背景的透明度（10-100%）",
+            self.appear_group,
+        )
+        self.opacity_spin = DoubleSpinBox()
+        self.opacity_spin.setRange(10, 100)
+        self.opacity_spin.setSingleStep(5)
+        self.opacity_spin.setDecimals(0)
+        self.opacity_card.addWidget(self.opacity_spin)
+
+        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.max_height_card, self.opacity_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
 
@@ -1858,6 +2010,350 @@ class AboutInterface(ScrollArea):
             InfoBar.error("检查更新失败", f"无法连接 GitHub API：{e}", parent=self)
 
 
+class RuleGroupEditorDialog(QDialog):
+    def __init__(self, group_data: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
+        self.resize(980, 520)
+        self.group_data = copy.deepcopy(group_data)
+        self.rules = self.group_data.get("rules", [])
+        self._copied_rule = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        head = QHBoxLayout()
+        head.addStretch(1)
+        self.copy_btn = PushButton("复制规则")
+        self.paste_btn = PushButton("粘贴规则")
+        self.del_btn = PushButton("删除规则")
+        self.add_btn = PrimaryPushButton("新增规则")
+        for btn in (self.copy_btn, self.paste_btn, self.del_btn, self.add_btn):
+            btn.setFixedWidth(100)
+            head.addWidget(btn)
+        layout.addLayout(head)
+
+        self.table = QTableWidget(self)
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels([
+            "", "规则名称", "正则", "区分大小写", "全字匹配", "上下移动", "删除"
+        ])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        for c in (2, 3, 4, 5, 6):
+            header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
+        layout.addWidget(self.table)
+
+        bottom = QHBoxLayout()
+        bottom.addStretch(1)
+        self.ok_btn = PrimaryPushButton("确定")
+        self.cancel_btn = PushButton("取消")
+        bottom.addWidget(self.cancel_btn)
+        bottom.addWidget(self.ok_btn)
+        layout.addLayout(bottom)
+
+        self.copy_btn.clicked.connect(self.copy_selected_rule)
+        self.paste_btn.clicked.connect(self.paste_rule)
+        self.del_btn.clicked.connect(self.delete_selected_rules)
+        self.add_btn.clicked.connect(self.add_rule)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.ok_btn.clicked.connect(self.accept)
+
+        self._reload_table()
+
+    def _selected_rows(self) -> list[int]:
+        rows = []
+        for r in range(self.table.rowCount()):
+            cb = self.table.cellWidget(r, 0)
+            if isinstance(cb, QCheckBox) and cb.isChecked():
+                rows.append(r)
+        return rows
+
+    def _reload_table(self):
+        self.table.setRowCount(len(self.rules))
+        for r, rule in enumerate(self.rules):
+            sel = QCheckBox()
+            self.table.setCellWidget(r, 0, sel)
+
+            name_item = QTableWidgetItem(rule.get("name", f"规则{r + 1}"))
+            self.table.setItem(r, 1, name_item)
+
+            for col, key in ((2, "regex"), (3, "case_sensitive"), (4, "whole_word")):
+                sw = SwitchButton(self.table)
+                sw.setChecked(bool(rule.get(key, False)))
+                self.table.setCellWidget(r, col, sw)
+
+            up_down = QWidget(self.table)
+            up_down_layout = QHBoxLayout(up_down)
+            up_down_layout.setContentsMargins(0, 0, 0, 0)
+            up_btn = PushButton("↑")
+            down_btn = PushButton("↓")
+            up_btn.setFixedWidth(36)
+            down_btn.setFixedWidth(36)
+            up_btn.clicked.connect(lambda _, i=r: self.move_rule(i, -1))
+            down_btn.clicked.connect(lambda _, i=r: self.move_rule(i, 1))
+            up_down_layout.addWidget(up_btn)
+            up_down_layout.addWidget(down_btn)
+            self.table.setCellWidget(r, 5, up_down)
+
+            del_btn = PushButton("删除")
+            del_btn.clicked.connect(lambda _, i=r: self.delete_rule(i))
+            self.table.setCellWidget(r, 6, del_btn)
+
+
+    def _sync_back(self):
+        for r in range(self.table.rowCount()):
+            self.rules[r]["name"] = self.table.item(r, 1).text() if self.table.item(r, 1) else f"规则{r + 1}"
+            self.rules[r]["regex"] = bool(self.table.cellWidget(r, 2).isChecked())
+            self.rules[r]["case_sensitive"] = bool(self.table.cellWidget(r, 3).isChecked())
+            self.rules[r]["whole_word"] = bool(self.table.cellWidget(r, 4).isChecked())
+
+    def add_rule(self):
+        self._sync_back()
+        self.rules.append({
+            "name": f"规则{len(self.rules) + 1}",
+            "pattern": "",
+            "replacement": "",
+            "regex": False,
+            "case_sensitive": False,
+            "whole_word": False,
+            "enabled": True,
+        })
+        self._reload_table()
+
+    def move_rule(self, index: int, delta: int):
+        self._sync_back()
+        target = index + delta
+        if not (0 <= index < len(self.rules) and 0 <= target < len(self.rules)):
+            return
+        self.rules[index], self.rules[target] = self.rules[target], self.rules[index]
+        self._reload_table()
+
+    def delete_rule(self, index: int):
+        self._sync_back()
+        if 0 <= index < len(self.rules):
+            self.rules.pop(index)
+        if not self.rules:
+            self.add_rule()
+        else:
+            self._reload_table()
+
+    def delete_selected_rules(self):
+        self._sync_back()
+        rows = set(self._selected_rows())
+        self.rules = [r for i, r in enumerate(self.rules) if i not in rows]
+        if not self.rules:
+            self.add_rule()
+        else:
+            self._reload_table()
+
+    def copy_selected_rule(self):
+        self._sync_back()
+        rows = self._selected_rows()
+        if rows:
+            self._copied_rule = copy.deepcopy(self.rules[rows[0]])
+
+    def paste_rule(self):
+        if not self._copied_rule:
+            return
+        self._sync_back()
+        self.rules.append(copy.deepcopy(self._copied_rule))
+        self._reload_table()
+
+    def get_group_data(self) -> dict:
+        self._sync_back()
+        self.group_data["rules"] = self.rules
+        return self.group_data
+
+
+class RuleSettingInterface(ScrollArea):
+    def __init__(self, cfg: dict, parent=None):
+        super().__init__(parent=parent)
+        self.cfg = cfg
+        self.setObjectName("ruleSettingInterface")
+        self.current_mode = "ocr"
+        self.group_key = {
+            "ocr": "ocr_rule_groups",
+            "output": "output_rule_groups",
+        }
+        self.cfg["ocr_rule_groups"] = normalize_rule_groups(self.cfg.get("ocr_rule_groups", []))
+        self.cfg["output_rule_groups"] = normalize_rule_groups(self.cfg.get("output_rule_groups", []))
+
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.top_bar = QFrame(self.view)
+        self.top_bar.setObjectName("ruleTopBar")
+        self.top_bar.setStyleSheet("#ruleTopBar {background: transparent; border-bottom: 1px solid rgba(120,120,120,0.35);}")
+        top_layout = QHBoxLayout(self.top_bar)
+        top_layout.setContentsMargins(0, 0, 0, 8)
+
+        self.mode_seg = SegmentedWidget(self.top_bar)
+        self.mode_seg.addItem("ocr", "OCR规则")
+        self.mode_seg.addItem("output", "输出规则")
+        self.mode_seg.setCurrentItem("ocr")
+
+        top_layout.addWidget(self.mode_seg)
+        top_layout.addStretch(1)
+
+        self.add_group_btn = PrimaryPushButton("新增规则组", self.top_bar)
+        self.copy_group_btn = PushButton("复制规则组", self.top_bar)
+        self.del_group_btn = PushButton("删除规则组", self.top_bar)
+        for b in (self.del_group_btn, self.copy_group_btn, self.add_group_btn):
+            b.setFixedWidth(110)
+            top_layout.addWidget(b)
+
+        self.layout.addWidget(self.top_bar)
+
+        self.group_table = QTableWidget(self.view)
+        self.group_table.setColumnCount(6)
+        self.group_table.setHorizontalHeaderLabels(["", "规则组名称", "规则条数", "上下移动", "编辑规则组", "启用"])
+        self.group_table.verticalHeader().setVisible(False)
+        self.group_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        header = self.group_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.layout.addWidget(self.group_table)
+
+        self.layout.addStretch(1)
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+        self.mode_seg.currentItemChanged.connect(self.on_mode_changed)
+        self.add_group_btn.clicked.connect(self.add_group)
+        self.copy_group_btn.clicked.connect(self.copy_group)
+        self.del_group_btn.clicked.connect(self.delete_group)
+
+        self._reload_group_table()
+
+    def _groups(self) -> list[dict]:
+        key = self.group_key[self.current_mode]
+        return self.cfg.setdefault(key, [])
+
+    def on_mode_changed(self, _):
+        self.current_mode = get_seg_key(self.mode_seg, "ocr")
+        self._reload_group_table()
+
+    def _selected_rows(self) -> list[int]:
+        rows = []
+        for r in range(self.group_table.rowCount()):
+            cb = self.group_table.cellWidget(r, 0)
+            if isinstance(cb, QCheckBox) and cb.isChecked():
+                rows.append(r)
+        return rows
+
+    def _sync_group_names(self):
+        groups = self._groups()
+        for r in range(self.group_table.rowCount()):
+            if r >= len(groups):
+                break
+            item = self.group_table.item(r, 1)
+            groups[r]["name"] = item.text() if item else groups[r].get("name", f"规则组{r + 1}")
+            sw = self.group_table.cellWidget(r, 5)
+            if isinstance(sw, SwitchButton):
+                groups[r]["enabled"] = sw.isChecked()
+
+    def _reload_group_table(self):
+        groups = normalize_rule_groups(self._groups())
+        self.cfg[self.group_key[self.current_mode]] = groups
+
+        self.group_table.setRowCount(len(groups))
+        for r, group in enumerate(groups):
+            self.group_table.setCellWidget(r, 0, QCheckBox())
+            self.group_table.setItem(r, 1, QTableWidgetItem(group.get("name", f"规则组{r + 1}")))
+            self.group_table.setItem(r, 2, QTableWidgetItem(str(len(group.get("rules", [])))))
+
+            move_widget = QWidget(self.group_table)
+            move_layout = QHBoxLayout(move_widget)
+            move_layout.setContentsMargins(0, 0, 0, 0)
+            up_btn = PushButton("↑")
+            down_btn = PushButton("↓")
+            up_btn.setFixedWidth(36)
+            down_btn.setFixedWidth(36)
+            up_btn.clicked.connect(lambda _, i=r: self.move_group(i, -1))
+            down_btn.clicked.connect(lambda _, i=r: self.move_group(i, 1))
+            move_layout.addWidget(up_btn)
+            move_layout.addWidget(down_btn)
+            self.group_table.setCellWidget(r, 3, move_widget)
+
+            edit_btn = PushButton("编辑规则组")
+            edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
+            self.group_table.setCellWidget(r, 4, edit_btn)
+
+            sw = SwitchButton()
+            sw.setChecked(group.get("enabled", True))
+            self.group_table.setCellWidget(r, 5, sw)
+
+
+    def add_group(self):
+        self._sync_group_names()
+        groups = self._groups()
+        groups.append(_normalize_rule_group({}, len(groups)))
+        self._reload_group_table()
+
+    def copy_group(self):
+        self._sync_group_names()
+        rows = self._selected_rows()
+        if not rows:
+            return
+        groups = self._groups()
+        groups.append(copy.deepcopy(groups[rows[0]]))
+        groups[-1]["name"] = f"{groups[-1].get('name', '规则组')} - 副本"
+        self._reload_group_table()
+
+    def delete_group(self):
+        self._sync_group_names()
+        rows = set(self._selected_rows())
+        if not rows:
+            return
+        groups = self._groups()
+        self.cfg[self.group_key[self.current_mode]] = [g for i, g in enumerate(groups) if i not in rows]
+        if not self.cfg[self.group_key[self.current_mode]]:
+            self.cfg[self.group_key[self.current_mode]] = [_normalize_rule_group({}, 0)]
+        self._reload_group_table()
+
+    def move_group(self, index: int, delta: int):
+        self._sync_group_names()
+        groups = self._groups()
+        target = index + delta
+        if not (0 <= index < len(groups) and 0 <= target < len(groups)):
+            return
+        groups[index], groups[target] = groups[target], groups[index]
+        self._reload_group_table()
+
+    def sync_to_config(self):
+        old_mode = self.current_mode
+        for mode in ("ocr", "output"):
+            self.current_mode = mode
+            self._sync_group_names()
+            self.cfg[self.group_key[mode]] = normalize_rule_groups(self.cfg.get(self.group_key[mode], []))
+        self.current_mode = old_mode
+
+    def edit_group(self, index: int):
+        self._sync_group_names()
+        groups = self._groups()
+        if not (0 <= index < len(groups)):
+            return
+        dlg = RuleGroupEditorDialog(groups[index], self.window() or self)
+        if dlg.exec():
+            groups[index] = dlg.get_group_data()
+            self._reload_group_table()
+
+
+
+
 # ══════════════════════════════════════════════
 # 主窗口
 # ══════════════════════════════════════════════
@@ -1876,6 +2372,7 @@ class MainWindow(FluentWindow):
         self.setting_page = SettingInterface(self)
         self.ai_page      = AISettingInterface(self)
         self.overlay_page = OverlaySettingInterface(self)
+        self.rule_page    = RuleSettingInterface(self.cfg, self)
         self.debug_page   = DebugSettingInterface(self)
         self.console_page = ConsoleLogInterface(self)
         self.about_page   = AboutInterface(self)
@@ -1891,6 +2388,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "字幕设置")
+        self.addSubInterface(self.rule_page,    FIF.ALIGNMENT,  "规则设置")
         self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
@@ -1934,6 +2432,7 @@ class MainWindow(FluentWindow):
             self.setting_page,
             self.ai_page,
             self.overlay_page,
+            self.rule_page,
             self.about_page,
         ]
         if self._dev_tabs_unlocked:
@@ -2115,6 +2614,7 @@ class MainWindow(FluentWindow):
         s.trigger_combo.setCurrentText(self.cfg.get("trigger_key", "Left Click"))
         s.sw_visible.setChecked(self.cfg.get("window_visible", True))
         s.sw_top.setChecked(self.cfg.get("always_on_top", True))
+        s.sw_click_through.setChecked(self.cfg.get("click_through", False))
 
         self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
         self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
@@ -2140,6 +2640,7 @@ class MainWindow(FluentWindow):
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
         self.overlay_page.max_height_spin.setValue(self.cfg.get("ui_max_height", 0))
+        self.overlay_page.opacity_spin.setValue(self.cfg.get("overlay_opacity", 82))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         self.overlay_page.sw_overlay_boxes.setChecked(
@@ -2189,6 +2690,7 @@ class MainWindow(FluentWindow):
     # ── 设置保存 ──
 
     def save_all(self):
+        self.rule_page.sync_to_config()
         s = self.setting_page
         self.cfg.update({
             "capture_source":      get_seg_key(self.home_page.source_seg, "window"),
@@ -2200,10 +2702,12 @@ class MainWindow(FluentWindow):
             "auto_hide":           s.sw_hide.isChecked(),
             "window_visible":      s.sw_visible.isChecked(),
             "always_on_top":       s.sw_top.isChecked(),
+            "click_through":       s.sw_click_through.isChecked(),
             "show_ocr_text":       self.overlay_page.sw_show_ocr.isChecked(),
             "ocr_color":           self.overlay_page.ocr_color_btn.color(),
             "trans_color":         self.overlay_page.trans_color_btn.color(),
             "ui_max_height":       int(self.overlay_page.max_height_spin.value()),
+            "overlay_opacity":     int(self.overlay_page.opacity_spin.value()),
             "overlay_min_box_height": int(self.overlay_page.overlay_min_h_spin.value()),
             "ocr_model":           self.ai_page.ocr_model_edit.text(),
             "ocr_api":             self.ai_page.ocr_api_edit.text(),
