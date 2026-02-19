@@ -1004,7 +1004,7 @@ class SettingInterface(ScrollArea):
         self.trans_color_card.addWidget(self.trans_color_btn)
 
         self.overlay_min_h_card = CustomSettingCard(
-            FIF.TEXT,
+            FIF.BACK_TO_WINDOW,
             "最小贴字文本框高度",
             "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
             self.appear_group
@@ -1176,7 +1176,7 @@ class AISettingInterface(ScrollArea):
         self.ocr_api_edit = LineEdit()
         self.ocr_api_card.addWidget(self.ocr_api_edit)
 
-        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_card = CustomSettingCard(FIF.FINGERPRINT, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
@@ -1193,7 +1193,7 @@ class AISettingInterface(ScrollArea):
         self.llm_api_edit = LineEdit()
         self.llm_api_card.addWidget(self.llm_api_edit)
 
-        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_card = CustomSettingCard(FIF.FINGERPRINT, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
@@ -1246,7 +1246,7 @@ class OverlaySettingInterface(ScrollArea):
         self.sw_auto_merge_card.addWidget(self.sw_auto_merge)
 
         self.min_line_h_card = CustomSettingCard(
-            FIF.TEXT,
+            FIF.BACK_TO_WINDOW,
             "最小换行高度",
             "小于该高度的文本框会被视作可拼接行",
             self.overlay_group
