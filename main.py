@@ -567,6 +567,7 @@ class TextOverlayWindow(QWidget):
         ocr_color   = self._cfg.get("ocr_color", "#FFFF88")
         min_box_h   = int(self._cfg.get("overlay_min_box_height", 28))
         show_debug_boxes = self._cfg.get("show_overlay_debug_boxes", False)
+        overlay_alpha = int(self._cfg.get("overlay_opacity", 82) * 255 / 100)
 
         for item in items:
             bbox        = item["bbox"]           # [x1, y1, x2, y2] 0-1000
@@ -588,7 +589,7 @@ class TextOverlayWindow(QWidget):
             bg = QLabel(self)
             bg_h = lh * 2 if show_orig else lh
             bg.setGeometry(lx1, ly1, lw, bg_h)
-            bg.setStyleSheet("background: rgba(8,8,8,200); border-radius: 4px;")
+            bg.setStyleSheet(f"background: rgba(8,8,8,{overlay_alpha}); border-radius: 4px;")
             bg.show()
             # bg 作为普通 QLabel 不加入 _labels 列表（不需要颜色更新），
             # 但需要随本窗口清理 → 用父子关系自动管理
@@ -775,7 +776,35 @@ class SubtitleOverlay(QWidget):
         self.text_scroll.setWidgetResizable(True)
         self.text_scroll.setFrameShape(QFrame.NoFrame)
         self.text_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.text_scroll.setStyleSheet("background: transparent; border: none;")
+        self.text_scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+                margin: 2px 1px 2px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 120);
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 165);
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+                border: none;
+                height: 0;
+            }
+            """
+        )
 
         self.text_content = QWidget(self.text_scroll)
         self.text_layout = QVBoxLayout(self.text_content)
@@ -811,13 +840,21 @@ class SubtitleOverlay(QWidget):
 
     # ── 窗口属性 ──
 
+    def _overlay_alpha(self) -> int:
+        percent = int(self.cfg.get("overlay_opacity", 82) or 82)
+        percent = max(10, min(100, percent))
+        return int(percent * 255 / 100)
+
     def update_window_flags(self):
         flags = Qt.FramelessWindowHint | Qt.Tool
         if self.cfg.get("always_on_top", True):
             flags |= Qt.WindowStaysOnTopHint
+        if self.cfg.get("click_through", False) and hasattr(Qt, "WindowTransparentForInput"):
+            flags |= Qt.WindowTransparentForInput
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, bool(self.cfg.get("click_through", False)))
         if self.cfg.get("window_visible", True):
             self.show()
         else:
@@ -828,7 +865,7 @@ class SubtitleOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         path = QPainterPath()
         path.addRoundedRect(self.rect(), 12, 12)
-        painter.fillPath(path, QColor(10, 10, 10, 210))
+        painter.fillPath(path, QColor(10, 10, 10, self._overlay_alpha()))
         painter.end()
 
     def showEvent(self, event):
@@ -900,12 +937,16 @@ class SubtitleOverlay(QWidget):
 
     def _apply_text_max_height(self):
         max_h = int(self.cfg.get("ui_max_height", 0) or 0)
+        content_h = self.text_content.sizeHint().height()
+        target_h = content_h
         if max_h > 0:
+            target_h = min(content_h, max_h)
             self.text_scroll.setMaximumHeight(max_h)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         else:
             self.text_scroll.setMaximumHeight(16777215)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_scroll.setFixedHeight(max(1, target_h))
 
     def _get_capture_screen(self):
         name = self.cfg.get("capture_screen_name", "")
@@ -1187,6 +1228,8 @@ class SubtitleOverlay(QWidget):
         """调整大小前锁定底部锚点（向上扩展模式）"""
         if self.cfg.get("grow_direction", "up") == "up":
             self._bottom_anchor = self.y() + self.height()
+        self.text_content.adjustSize()
+        self._apply_text_max_height()
         self.adjustSize()
 
     # ── 拖拽移动 ──
@@ -1274,8 +1317,17 @@ class SettingInterface(ScrollArea):
         self.sw_top = SwitchButton()
         self.top_card.addWidget(self.sw_top)
 
+        self.click_through_card = CustomSettingCard(
+            FIF.CANCEL,
+            "对话框点击穿透",
+            "开启后鼠标可穿透悬浮字幕，直接点击后方窗口",
+            self.win_group
+        )
+        self.sw_click_through = SwitchButton()
+        self.click_through_card.addWidget(self.sw_click_through)
+
         for card in (self.width_card, self.grow_card, self.hide_card,
-                     self.visible_card, self.top_card):
+                     self.visible_card, self.top_card, self.click_through_card):
             self.win_group.addSettingCard(card)
         self.layout.addWidget(self.win_group)
 
@@ -1540,7 +1592,19 @@ class OverlaySettingInterface(ScrollArea):
         self.max_height_spin.setDecimals(0)
         self.max_height_card.addWidget(self.max_height_spin)
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.max_height_card):
+        self.opacity_card = CustomSettingCard(
+            FIF.BRUSH,
+            "对话框透明度",
+            "控制悬浮字幕与文字背景的透明度（10-100%）",
+            self.appear_group,
+        )
+        self.opacity_spin = DoubleSpinBox()
+        self.opacity_spin.setRange(10, 100)
+        self.opacity_spin.setSingleStep(5)
+        self.opacity_spin.setDecimals(0)
+        self.opacity_card.addWidget(self.opacity_spin)
+
+        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.max_height_card, self.opacity_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
 
@@ -1858,6 +1922,35 @@ class AboutInterface(ScrollArea):
             InfoBar.error("检查更新失败", f"无法连接 GitHub API：{e}", parent=self)
 
 
+class GameSettingInterface(ScrollArea):
+    """预留的游戏设置页。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("gameSettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.placeholder_group = SettingCardGroup("游戏设置", self.view)
+        self.placeholder_card = CustomSettingCard(
+            FIF.GAME,
+            "功能预留",
+            "该页面已预留，后续将添加游戏相关配置",
+            self.placeholder_group
+        )
+        self.placeholder_group.addSettingCard(self.placeholder_card)
+        self.layout.addWidget(self.placeholder_group)
+        self.layout.addStretch(1)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+
+
+
 # ══════════════════════════════════════════════
 # 主窗口
 # ══════════════════════════════════════════════
@@ -1876,6 +1969,7 @@ class MainWindow(FluentWindow):
         self.setting_page = SettingInterface(self)
         self.ai_page      = AISettingInterface(self)
         self.overlay_page = OverlaySettingInterface(self)
+        self.game_page    = GameSettingInterface(self)
         self.debug_page   = DebugSettingInterface(self)
         self.console_page = ConsoleLogInterface(self)
         self.about_page   = AboutInterface(self)
@@ -1891,6 +1985,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "字幕设置")
+        self.addSubInterface(self.game_page,    FIF.GAME,    "游戏设置")
         self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
@@ -1934,6 +2029,7 @@ class MainWindow(FluentWindow):
             self.setting_page,
             self.ai_page,
             self.overlay_page,
+            self.game_page,
             self.about_page,
         ]
         if self._dev_tabs_unlocked:
@@ -2115,6 +2211,7 @@ class MainWindow(FluentWindow):
         s.trigger_combo.setCurrentText(self.cfg.get("trigger_key", "Left Click"))
         s.sw_visible.setChecked(self.cfg.get("window_visible", True))
         s.sw_top.setChecked(self.cfg.get("always_on_top", True))
+        s.sw_click_through.setChecked(self.cfg.get("click_through", False))
 
         self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
         self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
@@ -2140,6 +2237,7 @@ class MainWindow(FluentWindow):
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
         self.overlay_page.max_height_spin.setValue(self.cfg.get("ui_max_height", 0))
+        self.overlay_page.opacity_spin.setValue(self.cfg.get("overlay_opacity", 82))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         self.overlay_page.sw_overlay_boxes.setChecked(
@@ -2200,10 +2298,12 @@ class MainWindow(FluentWindow):
             "auto_hide":           s.sw_hide.isChecked(),
             "window_visible":      s.sw_visible.isChecked(),
             "always_on_top":       s.sw_top.isChecked(),
+            "click_through":       s.sw_click_through.isChecked(),
             "show_ocr_text":       self.overlay_page.sw_show_ocr.isChecked(),
             "ocr_color":           self.overlay_page.ocr_color_btn.color(),
             "trans_color":         self.overlay_page.trans_color_btn.color(),
             "ui_max_height":       int(self.overlay_page.max_height_spin.value()),
+            "overlay_opacity":     int(self.overlay_page.opacity_spin.value()),
             "overlay_min_box_height": int(self.overlay_page.overlay_min_h_spin.value()),
             "ocr_model":           self.ai_page.ocr_model_edit.text(),
             "ocr_api":             self.ai_page.ocr_api_edit.text(),
