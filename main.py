@@ -2,8 +2,7 @@ import sys
 import time
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                                QLabel, QLayout, QPushButton, QColorDialog, QFrame,
-                                QMessageBox)
+                                QLabel, QLayout, QPushButton, QColorDialog, QFrame)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics)
 from shiboken6 import isValid
@@ -11,7 +10,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
-                             NavigationItemPosition)
+                             MessageBox)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -104,6 +103,40 @@ class CustomSettingCard(CardWidget):
             widget.setFixedWidth(220)
         self.layout.addWidget(widget, 0, Qt.AlignRight | Qt.AlignVCenter)
         self.layout.addSpacing(16)
+
+
+class PromptSettingCard(CardWidget):
+    """标题/说明在上，TextEdit 在下的卡片。"""
+
+    def __init__(self, icon, title, subtitle, height=110, parent=None):
+        super().__init__(parent=parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(16, 12, 16, 12)
+        self.layout.setSpacing(8)
+
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.setSpacing(10)
+
+        self.iconWidget = IconWidget(icon, self)
+        self.iconWidget.setFixedSize(20, 20)
+        top.addWidget(self.iconWidget, 0, Qt.AlignTop)
+
+        txt = QVBoxLayout()
+        txt.setSpacing(2)
+        self.titleLabel = QLabel(title, self)
+        self.titleLabel.setStyleSheet("font: 14px 'Segoe UI Semibold'; color: white;")
+        self.subLabel = QLabel(subtitle, self)
+        self.subLabel.setStyleSheet("font: 12px 'Segoe UI'; color: #aaa;")
+        txt.addWidget(self.titleLabel)
+        txt.addWidget(self.subLabel)
+        top.addLayout(txt, 1)
+
+        self.layout.addLayout(top)
+
+        self.editor = TextEdit(self)
+        self.editor.setFixedHeight(height)
+        self.layout.addWidget(self.editor)
 
 
 # ══════════════════════════════════════════════
@@ -1143,10 +1176,10 @@ class AISettingInterface(ScrollArea):
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
-        self.ocr_prompt_card = CustomSettingCard(FIF.CAMERA, "OCR 提示词", "普通 OCR 指令（贴字模式不使用）", self.ocr_group)
-        self.ocr_prompt_edit = TextEdit()
-        self.ocr_prompt_edit.setFixedHeight(90)
-        self.ocr_prompt_card.addWidget(self.ocr_prompt_edit)
+        self.ocr_prompt_card = PromptSettingCard(
+            FIF.CAMERA, "OCR 提示词", "普通 OCR 指令（贴字模式不使用）", 90, self.ocr_group
+        )
+        self.ocr_prompt_edit = self.ocr_prompt_card.editor
 
         for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card, self.ocr_prompt_card):
             self.ocr_group.addSettingCard(card)
@@ -1165,10 +1198,10 @@ class AISettingInterface(ScrollArea):
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
-        self.llm_prompt_card = CustomSettingCard(FIF.EDIT, "LLM 提示词", "翻译与润色指令", self.llm_group)
-        self.llm_prompt_edit = TextEdit()
-        self.llm_prompt_edit.setFixedHeight(110)
-        self.llm_prompt_card.addWidget(self.llm_prompt_edit)
+        self.llm_prompt_card = PromptSettingCard(
+            FIF.EDIT, "LLM 提示词", "翻译与润色指令", 110, self.llm_group
+        )
+        self.llm_prompt_edit = self.llm_prompt_card.editor
 
         for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card, self.llm_prompt_card):
             self.llm_group.addSettingCard(card)
@@ -1400,14 +1433,14 @@ class MainWindow(FluentWindow):
         self.reset_nav_btn.setVisible(show_save)
 
     def reset_all_settings(self):
-        ret = QMessageBox.question(
-            self,
-            "确认重置",
-            "确定要重置所有设置吗？该操作会立即覆盖当前配置。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+        box = MessageBox(
+            "确认重置所有设置？",
+            "该操作会立即用默认值覆盖当前配置，且无法撤销。",
+            self
         )
-        if ret != QMessageBox.Yes:
+        box.setClosableOnMaskClicked(True)
+        box.setDraggable(True)
+        if not box.exec():
             return
         from config_manager import DEFAULT_CONFIG
         self.cfg = DEFAULT_CONFIG.copy()
@@ -1464,20 +1497,6 @@ class MainWindow(FluentWindow):
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
-        self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
-        self.overlay_page.sw_overlay_boxes.setChecked(
-            self.cfg.get("show_overlay_debug_boxes", False)
-        )
-        self.overlay_page.sw_auto_merge.setChecked(
-            self.cfg.get("overlay_auto_merge_lines", False)
-        )
-        self.overlay_page.min_line_h_spin.setValue(
-            self.cfg.get("overlay_min_line_height", 40)
-        )
-        self.overlay_page.joiner_edit.setText(
-            self.cfg.get("overlay_joiner", " ")
-        )
-
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         self.overlay_page.sw_overlay_boxes.setChecked(
             self.cfg.get("show_overlay_debug_boxes", False)
