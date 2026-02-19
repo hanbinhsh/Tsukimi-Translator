@@ -1298,7 +1298,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         self.cfg = load_config()
         setTheme(Theme.DARK)
-        self.setWindowTitle("Ollama Translator Pro")
+        self.setWindowTitle("Tsukimi Translator")
         self.setWindowIcon(FIF.LANGUAGE.icon())
         self.resize(820, 820)
 
