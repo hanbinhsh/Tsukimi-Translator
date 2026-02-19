@@ -135,8 +135,6 @@ def normalize_rule_groups(groups) -> list[dict]:
         groups = []
     for i, g in enumerate(groups):
         out.append(_normalize_rule_group(g, i))
-    if not out:
-        out = [make_empty_rule_group()]
     return out
 
 
@@ -2145,10 +2143,12 @@ class RuleGroupEditorDialog(QDialog):
         wrap_layout = QHBoxLayout(wrap)
         wrap_layout.setContentsMargins(0, 0, 0, 0)
         wrap_layout.setSpacing(0)
+        wrap_layout.setAlignment(Qt.AlignCenter)
         cb = CheckBox(wrap)
         cb.setText("")
         cb.setChecked(checked)
-        wrap_layout.addStretch(1)
+        cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
         wrap_layout.addWidget(cb)
         wrap_layout.addStretch(1)
         return wrap, cb
@@ -2412,10 +2412,12 @@ class RuleSettingInterface(ScrollArea):
         wrap_layout = QHBoxLayout(wrap)
         wrap_layout.setContentsMargins(0, 0, 0, 0)
         wrap_layout.setSpacing(0)
+        wrap_layout.setAlignment(Qt.AlignCenter)
         cb = CheckBox(wrap)
         cb.setText("")
         cb.setChecked(checked)
-        wrap_layout.addStretch(1)
+        cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
         wrap_layout.addWidget(cb)
         wrap_layout.addStretch(1)
         return wrap, cb
@@ -2446,6 +2448,14 @@ class RuleSettingInterface(ScrollArea):
                 w.deleteLater()
 
         self.group_rows = []
+        if not groups:
+            empty_label = QLabel("无", self.group_rows_container)
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet("color: rgba(128,128,128,0.9);")
+            empty_label.setFixedHeight(44)
+            self.group_rows_layout.insertWidget(self.group_rows_layout.count() - 1, empty_label)
+            return
+
         for r, group in enumerate(groups):
             rules = group.get("rules", [])
             enabled_count = sum(1 for rule in rules if bool(rule.get("enabled", True)))
@@ -2528,8 +2538,6 @@ class RuleSettingInterface(ScrollArea):
             return
         groups = self._groups()
         self.cfg[self.group_key[self.current_mode]] = [g for i, g in enumerate(groups) if i not in rows]
-        if not self.cfg[self.group_key[self.current_mode]]:
-            self.cfg[self.group_key[self.current_mode]] = [make_empty_rule_group()]
         self._reload_group_table()
 
     def move_group(self, index: int, delta: int):
