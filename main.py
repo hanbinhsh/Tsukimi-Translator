@@ -2020,11 +2020,22 @@ class RuleGroupEditorDialog(QDialog):
         self.rules = self.group_data.get("rules", [])
         self._copied_rule = None
 
+        self.setObjectName("ruleGroupEditorDialog")
+        self.setStyleSheet(
+            "#ruleGroupEditorDialog { background: transparent; }"
+            "#ruleEditorTopBar { background: transparent; border-bottom: 1px solid rgba(120,120,120,0.35); }"
+            "#ruleEditorTable { border: 1px solid rgba(120,120,120,0.25); border-radius: 8px; }"
+            "#ruleEditorBottomBar { border-top: 1px solid rgba(120,120,120,0.35); }"
+        )
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
-        head = QHBoxLayout()
+        top_bar = QFrame(self)
+        top_bar.setObjectName("ruleEditorTopBar")
+        head = QHBoxLayout(top_bar)
+        head.setContentsMargins(0, 0, 0, 8)
         head.addStretch(1)
         self.copy_btn = PushButton("复制规则")
         self.paste_btn = PushButton("粘贴规则")
@@ -2033,11 +2044,12 @@ class RuleGroupEditorDialog(QDialog):
         for btn in (self.copy_btn, self.paste_btn, self.del_btn, self.add_btn):
             btn.setFixedWidth(100)
             head.addWidget(btn)
-        layout.addLayout(head)
+        layout.addWidget(top_bar)
 
         self.row_items = []
 
         table_wrap = QFrame(self)
+        table_wrap.setObjectName("ruleEditorTable")
         table_layout = QVBoxLayout(table_wrap)
         table_layout.setContentsMargins(0, 0, 0, 0)
         table_layout.setSpacing(6)
@@ -2080,13 +2092,16 @@ class RuleGroupEditorDialog(QDialog):
 
         layout.addWidget(table_wrap)
 
-        bottom = QHBoxLayout()
+        bottom_bar = QFrame(self)
+        bottom_bar.setObjectName("ruleEditorBottomBar")
+        bottom = QHBoxLayout(bottom_bar)
+        bottom.setContentsMargins(0, 8, 0, 0)
         bottom.addStretch(1)
         self.ok_btn = PrimaryPushButton("确定")
         self.cancel_btn = PushButton("取消")
         bottom.addWidget(self.cancel_btn)
         bottom.addWidget(self.ok_btn)
-        layout.addLayout(bottom)
+        layout.addWidget(bottom_bar)
 
         self.copy_btn.clicked.connect(self.copy_selected_rule)
         self.paste_btn.clicked.connect(self.paste_rule)
@@ -2104,6 +2119,18 @@ class RuleGroupEditorDialog(QDialog):
                 rows.append(i)
         return rows
 
+    def _build_center_checkbox(self, parent, width: int, checked: bool = False):
+        wrap = QWidget(parent)
+        wrap.setFixedWidth(width)
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(0, 0, 0, 0)
+        wrap_layout.setAlignment(Qt.AlignCenter)
+        cb = CheckBox(wrap)
+        cb.setText("")
+        cb.setChecked(checked)
+        wrap_layout.addWidget(cb)
+        return wrap, cb
+
     def _reload_table(self):
         while self.rows_layout.count() > 1:
             item = self.rows_layout.takeAt(0)
@@ -2120,10 +2147,8 @@ class RuleGroupEditorDialog(QDialog):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = CheckBox(row_widget)
-            selected_cb.setText("")
-            selected_cb.setFixedWidth(28)
-            row_layout.addWidget(selected_cb)
+            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 28)
+            row_layout.addWidget(selected_wrap)
 
             name_edit = LineEdit(row_widget)
             name_edit.setFixedWidth(170)
@@ -2142,29 +2167,17 @@ class RuleGroupEditorDialog(QDialog):
             replacement_edit.setText(rule.get("replacement", ""))
             row_layout.addWidget(replacement_edit)
 
-            enabled_cb = CheckBox(row_widget)
-            enabled_cb.setText("")
-            enabled_cb.setFixedWidth(60)
-            enabled_cb.setChecked(bool(rule.get("enabled", True)))
-            row_layout.addWidget(enabled_cb)
+            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 60, bool(rule.get("enabled", True)))
+            row_layout.addWidget(enabled_wrap)
 
-            regex_cb = CheckBox(row_widget)
-            regex_cb.setText("")
-            regex_cb.setFixedWidth(60)
-            regex_cb.setChecked(bool(rule.get("regex", False)))
-            row_layout.addWidget(regex_cb)
+            regex_wrap, regex_cb = self._build_center_checkbox(row_widget, 60, bool(rule.get("regex", False)))
+            row_layout.addWidget(regex_wrap)
 
-            case_cb = CheckBox(row_widget)
-            case_cb.setText("")
-            case_cb.setFixedWidth(90)
-            case_cb.setChecked(bool(rule.get("case_sensitive", False)))
-            row_layout.addWidget(case_cb)
+            case_wrap, case_cb = self._build_center_checkbox(row_widget, 90, bool(rule.get("case_sensitive", False)))
+            row_layout.addWidget(case_wrap)
 
-            whole_cb = CheckBox(row_widget)
-            whole_cb.setText("")
-            whole_cb.setFixedWidth(80)
-            whole_cb.setChecked(bool(rule.get("whole_word", False)))
-            row_layout.addWidget(whole_cb)
+            whole_wrap, whole_cb = self._build_center_checkbox(row_widget, 80, bool(rule.get("whole_word", False)))
+            row_layout.addWidget(whole_wrap)
 
             up_down = QWidget(row_widget)
             up_down_layout = QHBoxLayout(up_down)
@@ -2366,9 +2379,23 @@ class RuleSettingInterface(ScrollArea):
         key = self.group_key[self.current_mode]
         return self.cfg.setdefault(key, [])
 
-    def on_mode_changed(self, _):
-        self.current_mode = get_seg_key(self.mode_seg, "ocr")
+    def on_mode_changed(self, mode):
+        self._sync_group_names()
+        selected_mode = mode if mode in self.group_key else get_seg_key(self.mode_seg, "ocr")
+        self.current_mode = selected_mode
         self._reload_group_table()
+
+    def _build_center_checkbox(self, parent, width: int, checked: bool = False):
+        wrap = QWidget(parent)
+        wrap.setFixedWidth(width)
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(0, 0, 0, 0)
+        wrap_layout.setAlignment(Qt.AlignCenter)
+        cb = CheckBox(wrap)
+        cb.setText("")
+        cb.setChecked(checked)
+        wrap_layout.addWidget(cb)
+        return wrap, cb
 
     def _selected_rows(self) -> list[int]:
         rows = []
@@ -2406,10 +2433,8 @@ class RuleSettingInterface(ScrollArea):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = CheckBox(row_widget)
-            selected_cb.setText("")
-            selected_cb.setFixedWidth(28)
-            row_layout.addWidget(selected_cb)
+            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 28)
+            row_layout.addWidget(selected_wrap)
 
             name_edit = LineEdit(row_widget)
             name_edit.setFixedWidth(280)
@@ -2440,11 +2465,8 @@ class RuleSettingInterface(ScrollArea):
             edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
             row_layout.addWidget(edit_btn)
 
-            enabled_cb = CheckBox(row_widget)
-            enabled_cb.setText("")
-            enabled_cb.setFixedWidth(60)
-            enabled_cb.setChecked(group.get("enabled", True))
-            row_layout.addWidget(enabled_cb)
+            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 60, group.get("enabled", True))
+            row_layout.addWidget(enabled_wrap)
             row_layout.addStretch(1)
 
             self.group_rows_layout.insertWidget(self.group_rows_layout.count() - 1, row_widget)
@@ -2581,6 +2603,7 @@ class MainWindow(FluentWindow):
 
         self.start_nav_btn = PrimaryPushButton("启动翻译", self.top_action_bar)
         self.save_nav_btn = PushButton("保存设置", self.top_action_bar)
+        self.save_nav_btn.setProperty("isPrimary", False)
         self.reset_nav_btn = PushButton("重置设置", self.top_action_bar)
         self.start_nav_btn.setFixedWidth(140)
         self.save_nav_btn.setFixedWidth(140)
@@ -2730,7 +2753,7 @@ class MainWindow(FluentWindow):
 
     def _on_page_changed(self, index: int):
         page = self.stackedWidget.widget(index)
-        show_save = page in (self.setting_page, self.ai_page, self.overlay_page, self.debug_page)
+        show_save = page in (self.setting_page, self.ai_page, self.overlay_page, self.rule_page, self.debug_page)
         self.save_nav_btn.setVisible(show_save)
         self.reset_nav_btn.setVisible(show_save)
 
