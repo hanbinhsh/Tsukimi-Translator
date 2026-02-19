@@ -10,7 +10,8 @@ from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
-                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget)
+                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
+                             NavigationItemPosition)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -1299,7 +1300,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         self.cfg = load_config()
         setTheme(Theme.DARK)
-        self.setWindowTitle("Ollama Translator Pro")
+        self.setWindowTitle("Tsukimi Translator")
         self.setWindowIcon(FIF.LANGUAGE.icon())
         self.resize(820, 820)
 
@@ -1463,6 +1464,20 @@ class MainWindow(FluentWindow):
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
+        self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
+        self.overlay_page.sw_overlay_boxes.setChecked(
+            self.cfg.get("show_overlay_debug_boxes", False)
+        )
+        self.overlay_page.sw_auto_merge.setChecked(
+            self.cfg.get("overlay_auto_merge_lines", False)
+        )
+        self.overlay_page.min_line_h_spin.setValue(
+            self.cfg.get("overlay_min_line_height", 40)
+        )
+        self.overlay_page.joiner_edit.setText(
+            self.cfg.get("overlay_joiner", " ")
+        )
+
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         self.overlay_page.sw_overlay_boxes.setChecked(
             self.cfg.get("show_overlay_debug_boxes", False)
