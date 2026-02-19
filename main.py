@@ -1,11 +1,12 @@
 import sys
 import time
+from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QColorDialog, QFrame,
                                 QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
-                           QFont, QPainterPath, QFontMetrics)
+                           QFont, QPainterPath, QFontMetrics, QIcon)
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
@@ -32,6 +33,25 @@ def get_seg_key(seg_widget, default=""):
             if v == current:
                 return k
     return default
+
+
+def load_app_icon() -> QIcon:
+    """优先加载项目中的 logo 图标（ico/svg），用于标题栏与任务栏。"""
+    base = Path(__file__).resolve().parent
+    candidates = [
+        base / "logo.ico",
+        base / "logo.svg",
+        base / "assets" / "logo.ico",
+        base / "assets" / "logo.svg",
+        base / "icons" / "logo.ico",
+        base / "icons" / "logo.svg",
+    ]
+    for p in candidates:
+        if p.exists():
+            icon = QIcon(str(p))
+            if not icon.isNull():
+                return icon
+    return FIF.LANGUAGE.icon()
 
 
 # ══════════════════════════════════════════════
@@ -1497,9 +1517,10 @@ class MainWindow(FluentWindow):
     def __init__(self):
         super().__init__()
         self.cfg = load_config()
+        self.app_icon = load_app_icon()
         setTheme(Theme.DARK)
         self.setWindowTitle("Tsukimi Translator")
-        self.setWindowIcon(FIF.LANGUAGE.icon())
+        self.setWindowIcon(self.app_icon)
         self.resize(820, 820)
 
         self.home_page    = HomeInterface(self)
@@ -1847,6 +1868,7 @@ if __name__ == "__main__":
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     app = QApplication(sys.argv)
+    app.setWindowIcon(load_app_icon())
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
