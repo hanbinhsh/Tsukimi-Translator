@@ -161,7 +161,12 @@ class TranslationThread(QThread):
         self.config = config
 
     @staticmethod
-    def _looks_like_sentence_continuation(prev_text: str, next_text: str) -> bool:
+    def _looks_like_sentence_continuation(
+        prev_text: str,
+        next_text: str,
+        line_start_chars: str,
+        line_end_chars: str,
+    ) -> bool:
         """判断下一行是否更像是上一行的续句（如英文断行）。"""
         prev = (prev_text or "").strip()
         nxt = (next_text or "").strip()
@@ -175,12 +180,13 @@ class TranslationThread(QThread):
 
         # 下一行若以小写/标点开头，通常是续句而不是新句
         head = nxt[0]
-        if head.islower() or head in ",.;:!?)]}、，。！？；：」』）】》":
+        if head.islower() or head in (line_start_chars or ""):
             return True
 
         # 上一行没有常见终止符时，更可能和下一行相连
-        terminal_marks = (".", "!", "?", "。", "！", "？", "…")
-        return not prev.endswith(terminal_marks)
+        if line_end_chars:
+            return prev[-1] not in line_end_chars
+        return True
 
     @staticmethod
     def _merge_overlay_lines(items: list, min_height: int, joiner: str) -> list:
@@ -211,7 +217,10 @@ class TranslationThread(QThread):
 
             near_line = vertical_gap <= max(4, int(min_height * 0.8)) and overlap_ratio >= 0.2
             continuation = TranslationThread._looks_like_sentence_continuation(
-                current.get("text", ""), item.get("text", "")
+                current.get("text", ""),
+                item.get("text", ""),
+                self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
+                self.config.get("line_end_chars", ".!?。！？…"),
             )
 
             should_merge = near_line and (
@@ -931,8 +940,9 @@ class SubtitleOverlay(QWidget):
     def on_ocr_ready(self, text: str):
         """OCR 阶段完成，展示原文（若设置开启）"""
         print(f"[OCR 输出全文]\n{text}\n[OCR 输出结束]")
-        if self.cfg.get("show_ocr_text", False) and text.strip():
-            self.ocr_label.setText(text)
+        clean_text = self._post_process_text(text)
+        if self.cfg.get("show_ocr_text", False) and clean_text.strip():
+            self.ocr_label.setText(clean_text)
             self.ocr_label.setVisible(True)
             self._adjust_size()
 
@@ -948,13 +958,14 @@ class SubtitleOverlay(QWidget):
         if overlay_lines:
             debug_text = "\n\n".join(overlay_lines)
             print(f"[贴字模型输出全文]\n{debug_text}\n[贴字模型输出结束]")
-            self.trans_label.setText(debug_text)
+            self.trans_label.setText(self._post_process_text(debug_text))
             self._adjust_size()
 
     def on_partial_text(self, text: str):
         """流式输出：累计更新译文"""
-        if text.strip():
-            self.trans_label.setText(text)
+        processed = self._post_process_text(text)
+        if processed.strip():
+            self.trans_label.setText(processed)
             self._adjust_size()
 
     def on_translated(self, text: str, ai_duration: float):
@@ -963,13 +974,25 @@ class SubtitleOverlay(QWidget):
         print(f"截图: {self.step1_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s")
         print(f"模型输出全文:\n{text}\n{'='*40}")
 
-        if text.strip():
-            self.trans_label.setText(text)
+        processed = self._post_process_text(text)
+        if processed.strip():
+            self.trans_label.setText(processed)
             if self.cfg.get("auto_copy"):
-                QGuiApplication.clipboard().setText(text)
+                QGuiApplication.clipboard().setText(processed)
             self._adjust_size()
 
         self.is_processing = False
+
+    @staticmethod
+    def _remove_blank_lines(text: str) -> str:
+        lines = text.splitlines()
+        return "\n".join(line for line in lines if line.strip())
+
+    def _post_process_text(self, text: str) -> str:
+        result = text or ""
+        if self.cfg.get("remove_blank_lines", False):
+            result = self._remove_blank_lines(result)
+        return result
 
     def _adjust_size(self):
         """调整大小前锁定底部锚点（向上扩展模式）"""
@@ -1091,8 +1114,17 @@ class SettingInterface(ScrollArea):
         self.sw_copy = SwitchButton()
         self.copy_sw_card.addWidget(self.sw_copy)
 
+        self.remove_blank_card = CustomSettingCard(
+            FIF.ALIGNMENT,
+            "自动去除空行",
+            "移除翻译文本框中的空白行，避免显示大段间隙",
+            self.perf_group
+        )
+        self.sw_remove_blank = SwitchButton()
+        self.remove_blank_card.addWidget(self.sw_remove_blank)
+
         for card in (self.scale_card, self.stream_card, self.ocr_sw_card,
-                     self.llm_sw_card, self.copy_sw_card):
+                     self.llm_sw_card, self.copy_sw_card, self.remove_blank_card):
             self.perf_group.addSettingCard(card)
         self.layout.addWidget(self.perf_group)
 
@@ -1347,12 +1379,32 @@ class OverlaySettingInterface(ScrollArea):
         self.joiner_edit = LineEdit()
         self.joiner_card.addWidget(self.joiner_edit)
 
+        self.line_start_chars_card = CustomSettingCard(
+            FIF.FONT,
+            "续句起始字符",
+            "下一行以这些字符开头时，将判定为上一行续句",
+            self.overlay_group
+        )
+        self.line_start_chars_edit = LineEdit()
+        self.line_start_chars_card.addWidget(self.line_start_chars_edit)
+
+        self.line_end_chars_card = CustomSettingCard(
+            FIF.FONT,
+            "断句结束字符",
+            "上一行以这些字符结尾时，将判定为一句结束",
+            self.overlay_group
+        )
+        self.line_end_chars_edit = LineEdit()
+        self.line_end_chars_card.addWidget(self.line_end_chars_edit)
+
         for card in (
             self.sw_overlay_card,
             self.sw_debug_box_card,
             self.sw_auto_merge_card,
             self.min_line_h_card,
             self.joiner_card,
+            self.line_start_chars_card,
+            self.line_end_chars_card,
             self.overlay_min_h_card,
         ):
             self.overlay_group.addSettingCard(card)
@@ -1370,6 +1422,8 @@ class OverlaySettingInterface(ScrollArea):
     def _sync_merge_controls(self, checked: bool):
         self.min_line_h_card.setVisible(checked)
         self.joiner_card.setVisible(checked)
+        self.line_start_chars_card.setVisible(checked)
+        self.line_end_chars_card.setVisible(checked)
 
 
 # ══════════════════════════════════════════════
@@ -1540,6 +1594,7 @@ class MainWindow(FluentWindow):
         s.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
         s.sw_llm.setChecked(self.cfg.get("use_llm", True))
         s.sw_copy.setChecked(self.cfg.get("auto_copy", False))
+        s.sw_remove_blank.setChecked(self.cfg.get("remove_blank_lines", False))
 
         self.overlay_page.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
@@ -1557,6 +1612,12 @@ class MainWindow(FluentWindow):
         )
         self.overlay_page.joiner_edit.setText(
             self.cfg.get("overlay_joiner", " ")
+        )
+        self.overlay_page.line_start_chars_edit.setText(
+            self.cfg.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》")
+        )
+        self.overlay_page.line_end_chars_edit.setText(
+            self.cfg.get("line_end_chars", ".!?。！？…")
         )
 
     def _sync_region_ui(self):
@@ -1602,11 +1663,14 @@ class MainWindow(FluentWindow):
             "use_ocr":             s.sw_ocr.isChecked(),
             "use_llm":             s.sw_llm.isChecked(),
             "auto_copy":           s.sw_copy.isChecked(),
+            "remove_blank_lines":  s.sw_remove_blank.isChecked(),
             "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
             "overlay_joiner": self.overlay_page.joiner_edit.text(),
+            "line_start_chars": self.overlay_page.line_start_chars_edit.text(),
+            "line_end_chars": self.overlay_page.line_end_chars_edit.text(),
             "llm_prompt":          self.ai_page.llm_prompt_edit.toPlainText(),
             "target_hwnd":         self.home_page.combo.currentData(),
             "capture_screen_name": self.home_page.screen_combo.currentData() or "",
