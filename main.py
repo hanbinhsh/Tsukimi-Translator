@@ -1312,30 +1312,25 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
 
-        self.start_nav_btn = PrimaryPushButton("启动翻译", self)
-        self.save_nav_btn = PushButton("保存设置", self)
+        # 右侧页面固定操作条（类似固定首行）
+        self.top_action_bar = QWidget(self)
+        self.top_action_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self.top_action_bar.setStyleSheet(
+            "QWidget{background: rgba(20,20,20,210); border-radius: 8px;}"
+        )
+        self.top_action_layout = QHBoxLayout(self.top_action_bar)
+        self.top_action_layout.setContentsMargins(10, 8, 10, 8)
+        self.top_action_layout.setSpacing(8)
+
+        self.start_nav_btn = PrimaryPushButton("启动翻译", self.top_action_bar)
+        self.save_nav_btn = PushButton("保存设置", self.top_action_bar)
         self.start_nav_btn.setFixedWidth(140)
         self.save_nav_btn.setFixedWidth(140)
-        nav_widget_supported = hasattr(self, "navigationInterface") and hasattr(self.navigationInterface, "addWidget")
-        if nav_widget_supported:
-            self.navigationInterface.addWidget(
-                routeKey="start-translate",
-                widget=self.start_nav_btn,
-                onClick=self.toggle_overlay,
-                position=NavigationItemPosition.BOTTOM
-            )
-            self.navigationInterface.addWidget(
-                routeKey="save-config",
-                widget=self.save_nav_btn,
-                onClick=self.save_all,
-                position=NavigationItemPosition.BOTTOM
-            )
-        else:
-            # 退路：若当前 qfluentwidgets 版本不支持侧栏挂件，则保留按钮可用性
-            self.home_page.layout.addWidget(self.start_nav_btn)
-            self.setting_page.layout.addWidget(self.save_nav_btn)
-            self.start_nav_btn.clicked.connect(self.toggle_overlay)
-            self.save_nav_btn.clicked.connect(self.save_all)
+        self.top_action_layout.addWidget(self.start_nav_btn)
+        self.top_action_layout.addWidget(self.save_nav_btn)
+
+        self.start_nav_btn.clicked.connect(self.toggle_overlay)
+        self.save_nav_btn.clicked.connect(self.save_all)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1354,7 +1349,21 @@ class MainWindow(FluentWindow):
 
         self.refresh_windows()
         self.overlay = None
+        self._layout_top_action_bar()
         self._refresh_start_button_style()
+
+    def _layout_top_action_bar(self):
+        bar_w = 320
+        bar_h = 48
+        margin = 12
+        x = self.width() - bar_w - margin
+        y = 44
+        self.top_action_bar.setGeometry(x, y, bar_w, bar_h)
+        self.top_action_bar.raise_()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._layout_top_action_bar()
 
     def _refresh_start_button_style(self):
         running = self.overlay is not None
