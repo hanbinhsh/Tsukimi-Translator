@@ -775,7 +775,35 @@ class SubtitleOverlay(QWidget):
         self.text_scroll.setWidgetResizable(True)
         self.text_scroll.setFrameShape(QFrame.NoFrame)
         self.text_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.text_scroll.setStyleSheet("background: transparent; border: none;")
+        self.text_scroll.setStyleSheet(
+            """
+            QScrollArea {
+                background: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: transparent;
+                width: 8px;
+                margin: 2px 1px 2px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgba(255, 255, 255, 120);
+                border-radius: 4px;
+                min-height: 24px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: rgba(255, 255, 255, 165);
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical,
+            QScrollBar::add-page:vertical,
+            QScrollBar::sub-page:vertical {
+                background: transparent;
+                border: none;
+                height: 0;
+            }
+            """
+        )
 
         self.text_content = QWidget(self.text_scroll)
         self.text_layout = QVBoxLayout(self.text_content)
@@ -900,12 +928,16 @@ class SubtitleOverlay(QWidget):
 
     def _apply_text_max_height(self):
         max_h = int(self.cfg.get("ui_max_height", 0) or 0)
+        content_h = self.text_content.sizeHint().height()
+        target_h = content_h
         if max_h > 0:
+            target_h = min(content_h, max_h)
             self.text_scroll.setMaximumHeight(max_h)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         else:
             self.text_scroll.setMaximumHeight(16777215)
             self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_scroll.setFixedHeight(max(1, target_h))
 
     def _get_capture_screen(self):
         name = self.cfg.get("capture_screen_name", "")
@@ -1187,6 +1219,8 @@ class SubtitleOverlay(QWidget):
         """调整大小前锁定底部锚点（向上扩展模式）"""
         if self.cfg.get("grow_direction", "up") == "up":
             self._bottom_anchor = self.y() + self.height()
+        self.text_content.adjustSize()
+        self._apply_text_max_height()
         self.adjustSize()
 
     # ── 拖拽移动 ──
