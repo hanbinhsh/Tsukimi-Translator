@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObj
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QFrame,
                                 QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
-                                QHeaderView, QDialog, QAbstractItemView, QCheckBox)
+                                QHeaderView, QDialog, QAbstractItemView)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
 from shiboken6 import isValid
@@ -18,6 +18,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
+                             CheckBox,
                              MessageBox, NavigationItemPosition, ColorDialog)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
@@ -2119,7 +2120,8 @@ class RuleGroupEditorDialog(QDialog):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = QCheckBox(row_widget)
+            selected_cb = CheckBox(row_widget)
+            selected_cb.setText("")
             selected_cb.setFixedWidth(28)
             row_layout.addWidget(selected_cb)
 
@@ -2140,25 +2142,29 @@ class RuleGroupEditorDialog(QDialog):
             replacement_edit.setText(rule.get("replacement", ""))
             row_layout.addWidget(replacement_edit)
 
-            enabled_sw = SwitchButton(row_widget)
-            enabled_sw.setFixedWidth(60)
-            enabled_sw.setChecked(bool(rule.get("enabled", True)))
-            row_layout.addWidget(enabled_sw)
+            enabled_cb = CheckBox(row_widget)
+            enabled_cb.setText("")
+            enabled_cb.setFixedWidth(60)
+            enabled_cb.setChecked(bool(rule.get("enabled", True)))
+            row_layout.addWidget(enabled_cb)
 
-            regex_sw = SwitchButton(row_widget)
-            regex_sw.setFixedWidth(60)
-            regex_sw.setChecked(bool(rule.get("regex", False)))
-            row_layout.addWidget(regex_sw)
+            regex_cb = CheckBox(row_widget)
+            regex_cb.setText("")
+            regex_cb.setFixedWidth(60)
+            regex_cb.setChecked(bool(rule.get("regex", False)))
+            row_layout.addWidget(regex_cb)
 
-            case_sw = SwitchButton(row_widget)
-            case_sw.setFixedWidth(90)
-            case_sw.setChecked(bool(rule.get("case_sensitive", False)))
-            row_layout.addWidget(case_sw)
+            case_cb = CheckBox(row_widget)
+            case_cb.setText("")
+            case_cb.setFixedWidth(90)
+            case_cb.setChecked(bool(rule.get("case_sensitive", False)))
+            row_layout.addWidget(case_cb)
 
-            whole_sw = SwitchButton(row_widget)
-            whole_sw.setFixedWidth(80)
-            whole_sw.setChecked(bool(rule.get("whole_word", False)))
-            row_layout.addWidget(whole_sw)
+            whole_cb = CheckBox(row_widget)
+            whole_cb.setText("")
+            whole_cb.setFixedWidth(80)
+            whole_cb.setChecked(bool(rule.get("whole_word", False)))
+            row_layout.addWidget(whole_cb)
 
             up_down = QWidget(row_widget)
             up_down_layout = QHBoxLayout(up_down)
@@ -2186,10 +2192,10 @@ class RuleGroupEditorDialog(QDialog):
                 "name": name_edit,
                 "pattern": pattern_edit,
                 "replacement": replacement_edit,
-                "enabled": enabled_sw,
-                "regex": regex_sw,
-                "case_sensitive": case_sw,
-                "whole_word": whole_sw,
+                "enabled": enabled_cb,
+                "regex": regex_cb,
+                "case_sensitive": case_cb,
+                "whole_word": whole_cb,
             })
 
 
@@ -2296,7 +2302,9 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn = PrimaryPushButton("新增规则组", self.top_bar)
         self.copy_group_btn = PushButton("复制规则组", self.top_bar)
         self.del_group_btn = PushButton("删除规则组", self.top_bar)
-        for b in (self.del_group_btn, self.copy_group_btn, self.add_group_btn):
+        self.reset_btn = PushButton("重置设置", self.top_bar)
+        self.save_btn = PrimaryPushButton("保存设置", self.top_bar)
+        for b in (self.reset_btn, self.del_group_btn, self.copy_group_btn, self.add_group_btn, self.save_btn):
             b.setFixedWidth(110)
             top_layout.addWidget(b)
 
@@ -2349,6 +2357,8 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn.clicked.connect(self.add_group)
         self.copy_group_btn.clicked.connect(self.copy_group)
         self.del_group_btn.clicked.connect(self.delete_group)
+        self.reset_btn.clicked.connect(self.reset_settings)
+        self.save_btn.clicked.connect(self.save_settings)
 
         self._reload_group_table()
 
@@ -2396,7 +2406,8 @@ class RuleSettingInterface(ScrollArea):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_cb = QCheckBox(row_widget)
+            selected_cb = CheckBox(row_widget)
+            selected_cb.setText("")
             selected_cb.setFixedWidth(28)
             row_layout.addWidget(selected_cb)
 
@@ -2429,18 +2440,31 @@ class RuleSettingInterface(ScrollArea):
             edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
             row_layout.addWidget(edit_btn)
 
-            enabled_sw = SwitchButton(row_widget)
-            enabled_sw.setFixedWidth(60)
-            enabled_sw.setChecked(group.get("enabled", True))
-            row_layout.addWidget(enabled_sw)
+            enabled_cb = CheckBox(row_widget)
+            enabled_cb.setText("")
+            enabled_cb.setFixedWidth(60)
+            enabled_cb.setChecked(group.get("enabled", True))
+            row_layout.addWidget(enabled_cb)
             row_layout.addStretch(1)
 
             self.group_rows_layout.insertWidget(self.group_rows_layout.count() - 1, row_widget)
             self.group_rows.append({
                 "selected": selected_cb,
                 "name": name_edit,
-                "enabled": enabled_sw,
+                "enabled": enabled_cb,
             })
+
+    def reset_settings(self):
+        latest = load_config()
+        self.cfg["ocr_rule_groups"] = normalize_rule_groups(latest.get("ocr_rule_groups", []))
+        self.cfg["output_rule_groups"] = normalize_rule_groups(latest.get("output_rule_groups", []))
+        self._reload_group_table()
+        InfoBar.success("规则设置", "已重置为已保存配置", parent=self.window() or self)
+
+    def save_settings(self):
+        self.sync_to_config()
+        save_config(self.cfg)
+        InfoBar.success("规则设置", "规则配置已保存", parent=self.window() or self)
 
 
     def add_group(self):
