@@ -2,7 +2,7 @@ import sys
 import time
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
-                                QLabel, QLayout, QPushButton, QColorDialog)
+                                QLabel, QLayout, QPushButton, QColorDialog, QFrame)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics)
 from shiboken6 import isValid
@@ -1004,7 +1004,7 @@ class SettingInterface(ScrollArea):
         self.trans_color_card.addWidget(self.trans_color_btn)
 
         self.overlay_min_h_card = CustomSettingCard(
-            FIF.BACK_TO_WINDOW,
+            FIF.TEXT,
             "最小贴字文本框高度",
             "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
             self.appear_group
@@ -1176,7 +1176,7 @@ class AISettingInterface(ScrollArea):
         self.ocr_api_edit = LineEdit()
         self.ocr_api_card.addWidget(self.ocr_api_edit)
 
-        self.ocr_key_card = CustomSettingCard(FIF.FINGERPRINT, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
@@ -1193,7 +1193,7 @@ class AISettingInterface(ScrollArea):
         self.llm_api_edit = LineEdit()
         self.llm_api_card.addWidget(self.llm_api_edit)
 
-        self.llm_key_card = CustomSettingCard(FIF.FINGERPRINT, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
@@ -1246,7 +1246,7 @@ class OverlaySettingInterface(ScrollArea):
         self.sw_auto_merge_card.addWidget(self.sw_auto_merge)
 
         self.min_line_h_card = CustomSettingCard(
-            FIF.BACK_TO_WINDOW,
+            FIF.TEXT,
             "最小换行高度",
             "小于该高度的文本框会被视作可拼接行",
             self.overlay_group
@@ -1313,24 +1313,33 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
 
         # 右侧页面固定操作条（类似固定首行）
-        self.top_action_bar = QWidget(self)
-        self.top_action_bar.setAttribute(Qt.WA_StyledBackground, True)
+        self._content_host = self.stackedWidget if hasattr(self, "stackedWidget") else self
+        self.top_action_bar = QFrame(self._content_host)
+        self.top_action_bar.setObjectName("topActionBar")
         self.top_action_bar.setStyleSheet(
-            "QWidget{background: rgba(20,20,20,210); border-radius: 8px;}"
+            "#topActionBar {"
+            "background: transparent;"
+            "border-bottom: 1px solid rgba(120,120,120,0.35);"
+            "}"
         )
         self.top_action_layout = QHBoxLayout(self.top_action_bar)
-        self.top_action_layout.setContentsMargins(10, 8, 10, 8)
+        self.top_action_layout.setContentsMargins(16, 8, 16, 8)
         self.top_action_layout.setSpacing(8)
+        self.top_action_layout.addStretch(1)
 
         self.start_nav_btn = PrimaryPushButton("启动翻译", self.top_action_bar)
         self.save_nav_btn = PushButton("保存设置", self.top_action_bar)
         self.start_nav_btn.setFixedWidth(140)
         self.save_nav_btn.setFixedWidth(140)
-        self.top_action_layout.addWidget(self.start_nav_btn)
         self.top_action_layout.addWidget(self.save_nav_btn)
+        self.top_action_layout.addWidget(self.start_nav_btn)
 
         self.start_nav_btn.clicked.connect(self.toggle_overlay)
         self.save_nav_btn.clicked.connect(self.save_all)
+
+        # 给右侧各页面预留顶部固定栏空间，滚动内容从其下方开始
+        for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page):
+            page.setViewportMargins(0, 52, 0, 0)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1353,12 +1362,8 @@ class MainWindow(FluentWindow):
         self._refresh_start_button_style()
 
     def _layout_top_action_bar(self):
-        bar_w = 320
-        bar_h = 48
-        margin = 12
-        x = self.width() - bar_w - margin
-        y = 44
-        self.top_action_bar.setGeometry(x, y, bar_w, bar_h)
+        bar_h = 52
+        self.top_action_bar.setGeometry(0, 0, self._content_host.width(), bar_h)
         self.top_action_bar.raise_()
 
     def resizeEvent(self, event):
