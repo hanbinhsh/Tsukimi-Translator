@@ -129,7 +129,10 @@ class OllamaTranslator:
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
         ).json()
         raw = res.get("response", "").strip()
-        return self._parse_grounding_ocr(raw)
+        items = self._parse_grounding_ocr(raw)
+        if not items:
+            print(f"[overlay_ocr] 原始模型输出:\n{raw}")
+        return items
 
     @staticmethod
     def _parse_grounding_ocr(raw: str) -> list:
@@ -144,22 +147,70 @@ class OllamaTranslator:
         """
         import re
 
+        def _to_int_bbox(coords):
+            if not isinstance(coords, (list, tuple)) or len(coords) != 4:
+                return None
+            vals = []
+            for n in coords:
+                try:
+                    vals.append(int(round(float(n))))
+                except Exception:
+                    return None
+            return vals
+
+        def _try_parse_json_items(txt: str) -> list:
+            candidates = [txt]
+            if "```" in txt:
+                candidates.extend(m.group(1).strip() for m in re.finditer(r"```(?:json)?\s*([\s\S]*?)```", txt))
+
+            for cand in candidates:
+                cand = cand.strip()
+                if not cand:
+                    continue
+                try:
+                    data = json.loads(cand)
+                except Exception:
+                    continue
+
+                if isinstance(data, dict):
+                    data = data.get("items") or data.get("result") or data.get("data") or []
+                if not isinstance(data, list):
+                    continue
+
+                parsed = []
+                for it in data:
+                    if not isinstance(it, dict):
+                        continue
+                    text = str(it.get("text") or it.get("content") or "").strip()
+                    bbox = _to_int_bbox(it.get("bbox") or it.get("box") or it.get("det") or it.get("coords"))
+                    if text and bbox:
+                        parsed.append({"text": text, "bbox": bbox})
+                if parsed:
+                    return parsed
+            return []
+
         results = []
         pattern = re.compile(
             r'<\|ref\|>(.*?)<\|/ref\|>\s*'
-            r'<\|det\|>\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]<\|/det\|>'
+            r'<\|det\|>\[\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]\]<\|/det\|>'
             r'(?:\n([^\n<].*?))?(?=\n<\|ref\|>|$)',
             re.DOTALL
         )
         for m in pattern.finditer(raw):
-            x1, y1, x2, y2 = (int(m.group(2)), int(m.group(3)),
-                              int(m.group(4)), int(m.group(5)))
+            bbox = _to_int_bbox([m.group(2), m.group(3), m.group(4), m.group(5)])
+            if not bbox:
+                continue
             ref_text = (m.group(1) or '').strip()
             tail_text = (m.group(6) or '').strip()
             text = ref_text if ref_text else tail_text
             if text:
-                results.append({"text": text, "bbox": [x1, y1, x2, y2]})
-        return results
+                results.append({"text": text, "bbox": bbox})
+
+        if results:
+            return results
+
+        # 兜底：部分模型会直接输出 JSON 数组或 markdown 包裹的 JSON
+        return _try_parse_json_items(raw)
 
     def run_llm_batch(self, items: list) -> list:
         """
