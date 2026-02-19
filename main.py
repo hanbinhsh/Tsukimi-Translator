@@ -81,6 +81,26 @@ class InputSignal(QObject):
     triggered = Signal()
 
 
+class ConsoleSignal(QObject):
+    message = Signal(str)
+
+
+class StreamForwarder:
+    """将 stdout/stderr 同步到应用内控制台。"""
+
+    def __init__(self, signal_obj: ConsoleSignal, original_stream):
+        self._signal = signal_obj
+        self._original = original_stream
+
+    def write(self, text):
+        if text:
+            self._signal.message.emit(str(text))
+            self._original.write(text)
+
+    def flush(self):
+        self._original.flush()
+
+
 class ColorButton(QPushButton):
     """点击弹出颜色选择器，背景展示当前颜色"""
     color_changed = Signal(str)
@@ -1011,8 +1031,9 @@ class SubtitleOverlay(QWidget):
             img_bytes = bytes(buf.data())
             buf.close()
 
-            with open(debug_path, "wb") as f:
-                f.write(img_bytes)
+            if self.cfg.get("save_debug_images", False):
+                with open(debug_path, "wb") as f:
+                    f.write(img_bytes)
 
             self.step1_duration = time.perf_counter() - step1_start
             self.is_processing  = True
@@ -1566,6 +1587,68 @@ class OverlaySettingInterface(ScrollArea):
         self.line_end_chars_card.setVisible(checked)
 
 
+class DebugSettingInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("debugSettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.debug_group = SettingCardGroup("调试设置", self.view)
+        self.sw_dump_image_card = CustomSettingCard(
+            FIF.CAMERA,
+            "输出调试图片",
+            "开启后，每次截图会在程序目录写入 debug_current_vision 图片",
+            self.debug_group,
+        )
+        self.sw_dump_image = SwitchButton()
+        self.sw_dump_image_card.addWidget(self.sw_dump_image)
+        self.debug_group.addSettingCard(self.sw_dump_image_card)
+
+        self.layout.addWidget(self.debug_group)
+        self.layout.addStretch(1)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+
+class ConsoleLogInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("consoleLogInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(12)
+
+        self.layout.addWidget(SubtitleLabel("控制台日志", self.view))
+        self.log_edit = TextEdit(self.view)
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setPlaceholderText("运行日志会实时显示在这里")
+        self.log_edit.setMinimumHeight(520)
+        self.layout.addWidget(self.log_edit)
+
+        self.clear_btn = PushButton(FIF.DELETE, "清空日志", self.view)
+        self.clear_btn.clicked.connect(self.log_edit.clear)
+        self.layout.addWidget(self.clear_btn, 0, Qt.AlignRight)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def append_log(self, text: str):
+        if not text:
+            return
+        cursor = self.log_edit.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(text)
+        self.log_edit.setTextCursor(cursor)
+        self.log_edit.ensureCursorVisible()
+
+
 class AboutInterface(ScrollArea):
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -1693,12 +1776,18 @@ class MainWindow(FluentWindow):
         self.setting_page = SettingInterface(self)
         self.ai_page      = AISettingInterface(self)
         self.overlay_page = OverlaySettingInterface(self)
+        self.debug_page   = DebugSettingInterface(self)
+        self.console_page = ConsoleLogInterface(self)
         self.about_page   = AboutInterface(self)
+
+        self._dev_unlock_seq = ""
+        self._dev_tabs_unlocked = bool(self.cfg.get("dev_tabs_unlocked", False))
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+        self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
             FIF.INFO,
@@ -1736,8 +1825,24 @@ class MainWindow(FluentWindow):
         self.reset_nav_btn.clicked.connect(self.reset_all_settings)
 
         # 给右侧各页面预留底部固定栏空间，滚动内容在其上方结束
-        for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page, self.about_page):
+        self._pages_with_bottom_bar = [
+            self.home_page,
+            self.setting_page,
+            self.ai_page,
+            self.overlay_page,
+            self.about_page,
+        ]
+        if self._dev_tabs_unlocked:
+            self._pages_with_bottom_bar.extend([self.debug_page, self.console_page])
+        for page in self._pages_with_bottom_bar:
             page.setViewportMargins(0, 0, 0, 52)
+
+        self._console_signal = ConsoleSignal()
+        self._console_signal.message.connect(self.console_page.append_log)
+        self._origin_stdout = sys.stdout
+        self._origin_stderr = sys.stderr
+        sys.stdout = StreamForwarder(self._console_signal, self._origin_stdout)
+        sys.stderr = StreamForwarder(self._console_signal, self._origin_stderr)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1760,6 +1865,56 @@ class MainWindow(FluentWindow):
         self._layout_top_action_bar()
         self._refresh_start_button_style()
         self._on_page_changed(self.stackedWidget.currentIndex())
+
+    def _register_dev_tabs_if_needed(self):
+        if not self._dev_tabs_unlocked:
+            return
+        self.addSubInterface(
+            self.debug_page,
+            FIF.DEVELOPER_TOOLS,
+            "调试设置",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.addSubInterface(
+            self.console_page,
+            FIF.DOCUMENT,
+            "控制台日志",
+            NavigationItemPosition.BOTTOM,
+        )
+
+    def _unlock_dev_tabs(self):
+        if self._dev_tabs_unlocked:
+            return
+        self._dev_tabs_unlocked = True
+        self.cfg["dev_tabs_unlocked"] = True
+        save_config(self.cfg)
+        self.addSubInterface(
+            self.debug_page,
+            FIF.DEVELOPER_TOOLS,
+            "调试设置",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.addSubInterface(
+            self.console_page,
+            FIF.DOCUMENT,
+            "控制台日志",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.debug_page.setViewportMargins(0, 0, 0, 52)
+        self.console_page.setViewportMargins(0, 0, 0, 52)
+        self.stackedWidget.setCurrentWidget(self.debug_page)
+        InfoBar.success("开发者模式", "已解锁调试设置与控制台日志标签页", parent=self)
+
+    def keyPressEvent(self, event):
+        if self.stackedWidget.currentWidget() == self.about_page:
+            text = (event.text() or "").lower()
+            if text.isalpha():
+                self._dev_unlock_seq = (self._dev_unlock_seq + text)[-3:]
+                if self._dev_unlock_seq == "ice":
+                    self._unlock_dev_tabs()
+            else:
+                self._dev_unlock_seq = ""
+        super().keyPressEvent(event)
 
     def _layout_top_action_bar(self):
         if not hasattr(self, 'top_action_bar'):
@@ -1789,7 +1944,7 @@ class MainWindow(FluentWindow):
 
     def _on_page_changed(self, index: int):
         page = self.stackedWidget.widget(index)
-        show_save = page in (self.setting_page, self.ai_page, self.overlay_page)
+        show_save = page in (self.setting_page, self.ai_page, self.overlay_page, self.debug_page)
         self.save_nav_btn.setVisible(show_save)
         self.reset_nav_btn.setVisible(show_save)
 
@@ -1805,6 +1960,7 @@ class MainWindow(FluentWindow):
             return
         from config_manager import DEFAULT_CONFIG
         self.cfg = DEFAULT_CONFIG.copy()
+        self.cfg["dev_tabs_unlocked"] = self._dev_tabs_unlocked
         save_config(self.cfg)
         self.load_settings()
         if self.overlay:
@@ -1886,6 +2042,9 @@ class MainWindow(FluentWindow):
         self.overlay_page.line_end_chars_edit.setText(
             self.cfg.get("line_end_chars", ".!?。！？…")
         )
+        self.debug_page.sw_dump_image.setChecked(
+            self.cfg.get("save_debug_images", False)
+        )
 
     def _sync_region_ui(self):
         region = self.cfg.get("capture_region")
@@ -1936,6 +2095,7 @@ class MainWindow(FluentWindow):
             "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
+            "save_debug_images": self.debug_page.sw_dump_image.isChecked(),
             "overlay_ocr_prompt": self.overlay_page.overlay_prompt_edit.toPlainText(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
             "overlay_max_line_gap": int(self.overlay_page.max_line_gap_spin.value()),
