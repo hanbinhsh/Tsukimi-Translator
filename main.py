@@ -1,4 +1,5 @@
 import sys
+import os
 import time
 from pathlib import Path
 import requests
@@ -38,7 +39,15 @@ def get_seg_key(seg_widget, default=""):
 
 def load_app_icon() -> QIcon:
     """优先加载项目中的 logo 图标（ico/svg），用于标题栏与任务栏。"""
-    base = Path(__file__).resolve().parent
+    
+    # 核心修复逻辑：判断当前是否是 PyInstaller 打包后的运行环境
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # 如果是打包后的 exe，基础路径指向解压后的临时目录
+        base = Path(sys._MEIPASS)
+    else:
+        # 如果是在本地跑 Python 脚本，正常使用当前文件目录
+        base = Path(__file__).resolve().parent
+
     candidates = [
         base / "logo.ico",
         base / "logo.svg",
@@ -47,13 +56,22 @@ def load_app_icon() -> QIcon:
         base / "icons" / "logo.ico",
         base / "icons" / "logo.svg",
     ]
+    
     for p in candidates:
         if p.exists():
             icon = QIcon(str(p))
             if not icon.isNull():
                 return icon
+                
     return FIF.LANGUAGE.icon()
 
+def resource_path(relative_path):
+    """生成资源文件（如图片、图标）的绝对路径，兼容本地开发和 PyInstaller 打包"""
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller 打包后的临时目录
+        return os.path.join(sys._MEIPASS, relative_path)
+    # 本地开发时的原始目录
+    return os.path.join(os.path.abspath("."), relative_path)
 
 # ══════════════════════════════════════════════
 # 信号桥 & 颜色按钮
@@ -1744,6 +1762,8 @@ class MainWindow(FluentWindow):
         self._on_page_changed(self.stackedWidget.currentIndex())
 
     def _layout_top_action_bar(self):
+        if not hasattr(self, 'top_action_bar'):
+            return
         bar_h = 52
         self.top_action_bar.setGeometry(0, self._content_host.height() - bar_h, self._content_host.width(), bar_h)
         self.top_action_bar.raise_()
@@ -2026,4 +2046,10 @@ if __name__ == "__main__":
     app.setWindowIcon(load_app_icon())
     w = MainWindow()
     w.show()
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        # 如果是在本地开发环境直接跑 .py，找不到 pyi_splash 库，就直接跳过，不报错
+        pass
     sys.exit(app.exec())
