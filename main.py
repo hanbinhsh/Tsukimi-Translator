@@ -1455,7 +1455,7 @@ class AISettingInterface(ScrollArea):
         self.ocr_prompt_edit = self.ocr_prompt_card.editor
 
         self.overlay_ocr_prompt_card = PromptSettingCard(
-            FIF.BRUSH, "贴字 OCR 提示词", "贴字模式下使用的 OCR grounding 指令", 90, self.ocr_group
+            FIF.BRUSH, "贴字 OCR 提示词", "用于带坐标 OCR；去掉提示词中的 \\n 可让模型尽量按行输出", 90, self.ocr_group
         )
         self.overlay_ocr_prompt_edit = self.overlay_ocr_prompt_card.editor
 
@@ -1554,6 +1554,17 @@ class OverlaySettingInterface(ScrollArea):
         )
         self.sw_overlay_ocr = SwitchButton()
         self.sw_overlay_card.addWidget(self.sw_overlay_ocr)
+
+        self.overlay_min_h_card = CustomSettingCard(
+            FIF.BACK_TO_WINDOW,
+            "最小贴字文本框高度",
+            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
+            self.appear_group
+        )
+        self.overlay_min_h_spin = DoubleSpinBox()
+        self.overlay_min_h_spin.setRange(10, 200)
+        self.overlay_min_h_spin.setSingleStep(2)
+        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
 
         self.sw_debug_box_card = CustomSettingCard(
             FIF.ZOOM,
@@ -1879,7 +1890,7 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
-        self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+        self.addSubInterface(self.overlay_page, FIF.BRUSH,   "字幕设置")
         self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
