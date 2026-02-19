@@ -94,18 +94,38 @@ def _normalize_rule_group(raw: dict, idx: int) -> dict:
         })
     if not rules:
         rules = [{
-            "name": "规则1",
+            "name": "无",
             "pattern": "",
             "replacement": "",
             "regex": False,
             "case_sensitive": False,
             "whole_word": False,
-            "enabled": True,
+            "enabled": False,
+            "placeholder": True,
         }]
     return {
         "name": str(raw.get("name", f"规则组{idx + 1}")) if isinstance(raw, dict) else f"规则组{idx + 1}",
         "enabled": bool(raw.get("enabled", True)) if isinstance(raw, dict) else True,
         "rules": rules,
+        "placeholder": bool(raw.get("placeholder", False)) if isinstance(raw, dict) else False,
+    }
+
+
+def make_empty_rule_group() -> dict:
+    return {
+        "name": "无",
+        "enabled": False,
+        "rules": [{
+            "name": "无",
+            "pattern": "",
+            "replacement": "",
+            "regex": False,
+            "case_sensitive": False,
+            "whole_word": False,
+            "enabled": False,
+            "placeholder": True,
+        }],
+        "placeholder": True,
     }
 
 
@@ -2130,6 +2150,7 @@ class RuleGroupEditorDialog(QDialog):
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
         wrap_layout.addWidget(cb)
+        wrap_layout.addStretch(1)
         return wrap, cb
 
     def _reload_table(self):
@@ -2225,6 +2246,8 @@ class RuleGroupEditorDialog(QDialog):
 
     def add_rule(self):
         self._sync_back()
+        if len(self.rules) == 1 and self.rules[0].get("placeholder"):
+            self.rules.clear()
         self.rules.append({
             "name": f"规则{len(self.rules) + 1}",
             "pattern": "",
@@ -2233,6 +2256,7 @@ class RuleGroupEditorDialog(QDialog):
             "case_sensitive": False,
             "whole_word": False,
             "enabled": True,
+            "placeholder": False,
         })
         self._reload_table()
 
@@ -2249,9 +2273,8 @@ class RuleGroupEditorDialog(QDialog):
         if 0 <= index < len(self.rules):
             self.rules.pop(index)
         if not self.rules:
-            self.add_rule()
-        else:
-            self._reload_table()
+            self.rules = [copy.deepcopy(make_empty_rule_group()["rules"][0])]
+        self._reload_table()
 
     def delete_selected_rules(self):
         self._sync_back()
@@ -2260,9 +2283,8 @@ class RuleGroupEditorDialog(QDialog):
             return
         self.rules = [r for i, r in enumerate(self.rules) if i not in rows]
         if not self.rules:
-            self.add_rule()
-        else:
-            self._reload_table()
+            self.rules = [copy.deepcopy(make_empty_rule_group()["rules"][0])]
+        self._reload_table()
 
     def copy_selected_rule(self):
         self._sync_back()
@@ -2397,6 +2419,7 @@ class RuleSettingInterface(ScrollArea):
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         cb.setStyleSheet("CheckBox { margin: 0px; padding: 0px; }")
         wrap_layout.addWidget(cb)
+        wrap_layout.addStretch(1)
         return wrap, cb
 
     def _selected_rows(self) -> list[int]:
@@ -2489,6 +2512,8 @@ class RuleSettingInterface(ScrollArea):
     def add_group(self):
         self._sync_group_names()
         groups = self._groups()
+        if len(groups) == 1 and groups[0].get("placeholder"):
+            groups.clear()
         groups.append(_normalize_rule_group({}, len(groups)))
         self._reload_group_table()
 
@@ -2498,8 +2523,12 @@ class RuleSettingInterface(ScrollArea):
         if not rows:
             return
         groups = self._groups()
-        groups.append(copy.deepcopy(groups[rows[0]]))
+        source = groups[rows[0]]
+        if source.get("placeholder"):
+            return
+        groups.append(copy.deepcopy(source))
         groups[-1]["name"] = f"{groups[-1].get('name', '规则组')} - 副本"
+        groups[-1]["placeholder"] = False
         self._reload_group_table()
 
     def delete_group(self):
