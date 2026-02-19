@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 
 CONFIG_FILE = "config.json"
 
@@ -55,6 +56,42 @@ DEFAULT_CONFIG = {
     "line_start_chars": ",.;:!?)]}、，。！？；：」』）】》",  # 下一行若以这些字符开头则判定为续句
     "line_end_chars": ".!?。！？…",  # 上一行若以这些字符结尾则判定为一句结束
 
+    # --- 规则设置 ---
+    "ocr_rule_groups": [
+        {
+            "name": "默认 OCR 规则组",
+            "enabled": True,
+            "rules": [
+                {
+                    "name": "去除首尾空白",
+                    "pattern": r"^\s+|\s+$",
+                    "replacement": "",
+                    "regex": True,
+                    "case_sensitive": False,
+                    "whole_word": False,
+                    "enabled": True,
+                }
+            ],
+        }
+    ],
+    "output_rule_groups": [
+        {
+            "name": "默认输出规则组",
+            "enabled": True,
+            "rules": [
+                {
+                    "name": "合并连续空行",
+                    "pattern": r"\n{3,}",
+                    "replacement": "\n\n",
+                    "regex": True,
+                    "case_sensitive": False,
+                    "whole_word": False,
+                    "enabled": True,
+                }
+            ],
+        }
+    ],
+
     # --- 其他 ---
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
     "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
@@ -71,9 +108,9 @@ def load_config():
             local_cfg = json.load(f)
             for k, v in DEFAULT_CONFIG.items():
                 if k not in local_cfg:
-                    local_cfg[k] = v
+                    local_cfg[k] = copy.deepcopy(v)
             return local_cfg
-    return DEFAULT_CONFIG.copy()
+    return copy.deepcopy(DEFAULT_CONFIG)
 
 def save_config(config):
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
