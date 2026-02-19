@@ -144,8 +144,8 @@ class OllamaTranslator:
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
         ).json()
-        raw = res.get("response", "")
-        items = self._parse_grounding_ocr(raw.strip())
+        raw = res.get("response", "").strip()
+        items = self._parse_grounding_ocr(raw)
         if return_raw:
             return items, raw
         return items

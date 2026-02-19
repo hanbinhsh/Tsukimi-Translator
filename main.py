@@ -380,7 +380,7 @@ class TranslationThread(QThread):
                             self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
                             self.config.get("line_end_chars", ".!?。！？…"),
                         )
-                    debug_info["ocr_text"] = "\n".join(it.get("text", "") for it in items).strip()
+                    debug_info["ocr_text"] = "\n".join(it.get("text", "") for it in items)
                     self.ocr_ready.emit(debug_info["ocr_text"])
 
                     if self.config.get("use_llm", True):
@@ -392,9 +392,8 @@ class TranslationThread(QThread):
                             it["translated"] = it.get("text", "")
 
                     debug_info["model_text"] = "\n\n".join(
-                        (it.get("translated") or it.get("text", "")).strip()
+                        it.get("translated", it.get("text", ""))
                         for it in items
-                        if (it.get("translated") or it.get("text", "")).strip()
                     )
                     self.overlay_ready.emit(items)
                     self.finished.emit("", time.perf_counter() - ai_start, debug_info)
@@ -782,6 +781,8 @@ class SubtitleOverlay(QWidget):
         self.text_layout = QVBoxLayout(self.text_content)
         self.text_layout.setContentsMargins(0, 0, 0, 0)
         self.text_layout.setSpacing(4)
+        self.text_content.setFixedWidth(fixed_w)
+        self.text_scroll.setFixedWidth(fixed_w)
 
         # OCR 原文标签
         self.ocr_label = OutlinedLabel("", self.text_content, color=self.cfg.get("ocr_color", "#FFFF88"))
@@ -885,6 +886,8 @@ class SubtitleOverlay(QWidget):
     def update_layout_settings(self):
         fixed_w = int(self.cfg.get("ui_max_width", 800))
         self.setFixedWidth(fixed_w + 28)
+        self.text_content.setFixedWidth(fixed_w)
+        self.text_scroll.setFixedWidth(fixed_w)
         for lbl in (self.ocr_label, self.trans_label):
             lbl.setFixedWidth(fixed_w)
         self.ocr_label.setColor(self.cfg.get("ocr_color", "#FFFF88"))
