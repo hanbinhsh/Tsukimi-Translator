@@ -60,7 +60,7 @@ DEFAULT_CONFIG = {
     "ocr_rule_groups": [
         {
             "name": "默认 OCR 规则组",
-            "enabled": True,
+            "enabled": False,
             "rules": [
                 {
                     "name": "去除首尾空白",
@@ -77,7 +77,7 @@ DEFAULT_CONFIG = {
     "output_rule_groups": [
         {
             "name": "默认输出规则组",
-            "enabled": True,
+            "enabled": False,
             "rules": [
                 {
                     "name": "合并连续空行",

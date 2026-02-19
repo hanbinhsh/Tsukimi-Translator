@@ -2015,7 +2015,7 @@ class RuleGroupEditorDialog(QDialog):
     def __init__(self, group_data: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
-        self.resize(1320, 680)
+        self.resize(1210, 680)
         self.group_data = copy.deepcopy(group_data)
         self.rules = self.group_data.get("rules", [])
         self._copied_rule = None
@@ -2037,12 +2037,12 @@ class RuleGroupEditorDialog(QDialog):
         head = QHBoxLayout(top_bar)
         head.setContentsMargins(0, 0, 0, 8)
         head.addStretch(1)
-        self.copy_btn = PushButton("复制规则")
-        self.paste_btn = PushButton("粘贴规则")
-        self.del_btn = PushButton("删除规则")
-        self.add_btn = PrimaryPushButton("新增规则")
+        self.copy_btn = PushButton("复制")
+        self.paste_btn = PushButton("粘贴")
+        self.del_btn = PushButton("删除")
+        self.add_btn = PrimaryPushButton("新增")
         for btn in (self.copy_btn, self.paste_btn, self.del_btn, self.add_btn):
-            btn.setFixedWidth(100)
+            btn.setFixedWidth(60)
             head.addWidget(btn)
         layout.addWidget(top_bar)
 
@@ -2060,14 +2060,14 @@ class RuleGroupEditorDialog(QDialog):
         header_layout.setSpacing(8)
         header_specs = [
             ("", 28),
-            ("规则名称", 170),
+            ("名称", 170),
             ("替换文本", 220),
             ("替换为", 220),
             ("启用", 60),
             ("正则", 60),
             ("区分大小写", 90),
             ("全字匹配", 80),
-            ("上下移动", 90),
+            ("排序", 90),
             ("删除", 60),
         ]
         for text, width in header_specs:
@@ -2312,13 +2312,11 @@ class RuleSettingInterface(ScrollArea):
         top_layout.addWidget(self.mode_seg)
         top_layout.addStretch(1)
 
-        self.add_group_btn = PrimaryPushButton("新增规则组", self.top_bar)
-        self.copy_group_btn = PushButton("复制规则组", self.top_bar)
-        self.del_group_btn = PushButton("删除规则组", self.top_bar)
-        self.reset_btn = PushButton("重置设置", self.top_bar)
-        self.save_btn = PrimaryPushButton("保存设置", self.top_bar)
-        for b in (self.reset_btn, self.del_group_btn, self.copy_group_btn, self.add_group_btn, self.save_btn):
-            b.setFixedWidth(110)
+        self.add_group_btn = PrimaryPushButton("新增", self.top_bar)
+        self.copy_group_btn = PushButton("复制", self.top_bar)
+        self.del_group_btn = PushButton("删除", self.top_bar)
+        for b in (self.del_group_btn, self.copy_group_btn, self.add_group_btn):
+            b.setFixedWidth(60)
             top_layout.addWidget(b)
 
         self.layout.addWidget(self.top_bar)
@@ -2338,10 +2336,10 @@ class RuleSettingInterface(ScrollArea):
         group_header_layout.setSpacing(8)
         group_header_specs = [
             ("", 28),
-            ("规则组名称", 280),
+            ("名称", 280),
             ("已启用/总数", 90),
-            ("上下移动", 90),
-            ("编辑规则组", 110),
+            ("排序", 90),
+            ("编辑", 60),
             ("启用", 60),
         ]
         for text, width in group_header_specs:
@@ -2370,8 +2368,6 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn.clicked.connect(self.add_group)
         self.copy_group_btn.clicked.connect(self.copy_group)
         self.del_group_btn.clicked.connect(self.delete_group)
-        self.reset_btn.clicked.connect(self.reset_settings)
-        self.save_btn.clicked.connect(self.save_settings)
 
         self._reload_group_table()
 
@@ -2460,8 +2456,8 @@ class RuleSettingInterface(ScrollArea):
             move_widget.setFixedWidth(90)
             row_layout.addWidget(move_widget)
 
-            edit_btn = PushButton("编辑规则组", row_widget)
-            edit_btn.setFixedWidth(110)
+            edit_btn = PushButton("编辑", row_widget)
+            edit_btn.setFixedWidth(60)
             edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
             row_layout.addWidget(edit_btn)
 
@@ -2475,19 +2471,6 @@ class RuleSettingInterface(ScrollArea):
                 "name": name_edit,
                 "enabled": enabled_cb,
             })
-
-    def reset_settings(self):
-        latest = load_config()
-        self.cfg["ocr_rule_groups"] = normalize_rule_groups(latest.get("ocr_rule_groups", []))
-        self.cfg["output_rule_groups"] = normalize_rule_groups(latest.get("output_rule_groups", []))
-        self._reload_group_table()
-        InfoBar.success("规则设置", "已重置为已保存配置", parent=self.window() or self)
-
-    def save_settings(self):
-        self.sync_to_config()
-        save_config(self.cfg)
-        InfoBar.success("规则设置", "规则配置已保存", parent=self.window() or self)
-
 
     def add_group(self):
         self._sync_group_names()
@@ -2606,7 +2589,7 @@ class MainWindow(FluentWindow):
         self.save_nav_btn.setProperty("isPrimary", False)
         self.reset_nav_btn = PushButton("重置设置", self.top_action_bar)
         self.start_nav_btn.setFixedWidth(140)
-        self.save_nav_btn.setFixedWidth(140)
+        self.save_nav_btn.setFixedWidth(110)
         self.reset_nav_btn.setFixedWidth(110)
         self.top_action_layout.addWidget(self.reset_nav_btn)
         self.top_action_layout.addWidget(self.save_nav_btn)
