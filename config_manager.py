@@ -12,6 +12,10 @@ DEFAULT_CONFIG = {
     "llm_api": "http://localhost:11434/api/generate",
     "llm_key": "",
     "ocr_prompt": "Extract all text from this image. Output only the text content, no explanations.",
+    "overlay_ocr_prompt": "<|grounding|>OCR the image.",
+    "ocr_temperature": 0,
+    "ocr_seed": 0,
+    "ocr_num_predict": 4096,
     "use_ocr": True,
     "use_llm": True,
     "use_stream": False,            # 是否流式输出
