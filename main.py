@@ -3,12 +3,14 @@ import time
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QColorDialog)
-from PySide6.QtGui import QGuiApplication, QPainter, QPen, QColor, QFont, QPainterPath
+from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
+                           QFont, QPainterPath, QFontMetrics)
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
-                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget)
+                             SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
+                             NavigationItemPosition)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -118,6 +120,51 @@ class TranslationThread(QThread):
         self.image_bytes = image_bytes
         self.config = config
 
+    @staticmethod
+    def _merge_overlay_lines(items: list, min_height: int, joiner: str) -> list:
+        """将连续的小高度行拼接为一句，减少被错误断行的影响。"""
+        if not items:
+            return items
+
+        merged = []
+        current = None
+        prev_small = False
+
+        for item in items:
+            x1, y1, x2, y2 = item["bbox"]
+            h = y2 - y1
+            is_small = h < max(1, min_height)
+
+            if current is None:
+                current = dict(item)
+                prev_small = is_small
+                continue
+
+            cx1, cy1, cx2, cy2 = current["bbox"]
+            vertical_gap = max(0, y1 - cy2)
+
+            should_merge = (
+                prev_small and is_small and
+                vertical_gap <= max(2, int(min_height * 0.6))
+            )
+
+            if should_merge:
+                left = min(cx1, x1)
+                top = min(cy1, y1)
+                right = max(cx2, x2)
+                bottom = max(cy2, y2)
+                current["bbox"] = [left, top, right, bottom]
+                current["text"] = f"{current.get('text', '')}{joiner}{item.get('text', '')}".strip()
+            else:
+                merged.append(current)
+                current = dict(item)
+
+            prev_small = is_small
+
+        if current is not None:
+            merged.append(current)
+        return merged
+
     def run(self):
         ai_start = time.perf_counter()
         worker = OllamaTranslator(self.config)
@@ -127,6 +174,12 @@ class TranslationThread(QThread):
             try:
                 items = worker.run_ocr_with_coords(self.image_bytes)
                 if items:
+                    if self.config.get("overlay_auto_merge_lines", False):
+                        items = self._merge_overlay_lines(
+                            items,
+                            int(self.config.get("overlay_min_line_height", 40)),
+                            self.config.get("overlay_joiner", " ")
+                        )
                     # 发出原文供 OCR 标签显示（合并所有文本）
                     self.ocr_ready.emit("\n".join(it["text"] for it in items))
                     if self.config.get("use_llm", True):
@@ -174,11 +227,11 @@ class TranslationThread(QThread):
 # ══════════════════════════════════════════════
 
 class OutlinedLabel(QLabel):
-    def __init__(self, text="", parent=None, color="#ffffff"):
+    def __init__(self, text="", parent=None, color="#ffffff", margins=(4, 4, 4, 4)):
         super().__init__(text, parent)
         self._text_color = QColor(color)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setContentsMargins(4, 4, 4, 4)
+        self.setContentsMargins(*margins)
 
     def setColor(self, hex_color: str):
         self._text_color = QColor(hex_color)
@@ -240,7 +293,53 @@ class TextOverlayWindow(QWidget):
 
     # ── 更新贴字内容 ──
 
-    def update_items(self, items: list):
+    @staticmethod
+    def _fit_font_size(text: str, width: int, height: int, min_size=8, max_size=54) -> int:
+        """在给定矩形内自适应字体大小。"""
+        if not text.strip() or width <= 4 or height <= 4:
+            return min_size
+
+        low, high = min_size, max_size
+        best = min_size
+        while low <= high:
+            mid = (low + high) // 2
+            metrics = QFontMetrics(QFont("Microsoft YaHei UI", mid))
+            text_rect = metrics.boundingRect(0, 0, width, height,
+                                             Qt.TextWordWrap | Qt.AlignCenter,
+                                             text)
+            if text_rect.height() <= height and text_rect.width() <= width:
+                best = mid
+                low = mid + 1
+            else:
+                high = mid - 1
+        return best
+
+    def _map_bbox_to_overlay(self, bbox: list, ocr_size: tuple | None) -> tuple[int, int, int, int]:
+        """将模型 bbox 映射为当前屏幕浮层中的逻辑坐标。"""
+        rx, ry = self._region["x"], self._region["y"]
+        rw, rh = self._region["w"], self._region["h"]
+        x1, y1, x2, y2 = bbox
+
+        # deepseek 常见两种格式：
+        # 1) 0-1000 归一化坐标
+        # 2) 基于输入图像尺寸的像素坐标
+        if max(abs(v) for v in (x1, y1, x2, y2)) <= 1000:
+            fx1, fy1 = x1 / 1000.0, y1 / 1000.0
+            fx2, fy2 = x2 / 1000.0, y2 / 1000.0
+        elif ocr_size and ocr_size[0] > 0 and ocr_size[1] > 0:
+            fx1, fy1 = x1 / ocr_size[0], y1 / ocr_size[1]
+            fx2, fy2 = x2 / ocr_size[0], y2 / ocr_size[1]
+        else:
+            fx1, fy1 = 0.0, 0.0
+            fx2, fy2 = 1.0, 1.0
+
+        lx1 = int(rx + fx1 * rw)
+        ly1 = int(ry + fy1 * rh)
+        lx2 = int(rx + fx2 * rw)
+        ly2 = int(ry + fy2 * rh)
+        return lx1, ly1, lx2, ly2
+
+    def update_items(self, items: list, ocr_size: tuple | None = None):
         """
         items: [{"text": str, "translated": str, "bbox": [x1,y1,x2,y2]}, ...]
         bbox 为 0-1000 归一化坐标，原点为截图区域左上角。
@@ -249,28 +348,32 @@ class TextOverlayWindow(QWidget):
             lbl.deleteLater()
         self._labels.clear()
 
-        rx, ry = self._region["x"], self._region["y"]
-        rw, rh = self._region["w"], self._region["h"]
         trans_color = self._cfg.get("trans_color", "#FFFFFF")
         show_orig   = self._cfg.get("show_ocr_text", False)
         ocr_color   = self._cfg.get("ocr_color", "#FFFF88")
+        min_box_h   = int(self._cfg.get("overlay_min_box_height", 28))
+        show_debug_boxes = self._cfg.get("show_overlay_debug_boxes", False)
 
         for item in items:
             bbox        = item["bbox"]           # [x1, y1, x2, y2] 0-1000
             orig_text   = item.get("text", "")
             trans_text  = item.get("translated", orig_text)
 
-            # 归一化坐标 → 屏幕内逻辑像素（相对于本窗口左上角）
-            lx1 = int(rx + bbox[0] / 1000 * rw)
-            ly1 = int(ry + bbox[1] / 1000 * rh)
-            lx2 = int(rx + bbox[2] / 1000 * rw)
-            ly2 = int(ry + bbox[3] / 1000 * rh)
-            lw  = max(lx2 - lx1, 60)
-            lh  = max(ly2 - ly1, 20)
+            lx1, ly1, lx2, ly2 = self._map_bbox_to_overlay(bbox, ocr_size)
+            lw = max(lx2 - lx1, 10)
+            lh = max(ly2 - ly1, min_box_h)
+
+            # 仅调试时显示模型原始框
+            if show_debug_boxes:
+                debug_box = QLabel(self)
+                debug_box.setGeometry(lx1, ly1, lw, lh)
+                debug_box.setStyleSheet("border: 2px solid rgba(255, 80, 80, 220); background: transparent;")
+                debug_box.show()
 
             # 背景块（深色半透明遮罩）
             bg = QLabel(self)
-            bg.setGeometry(lx1, ly1, lw, lh)
+            bg_h = lh * 2 if show_orig else lh
+            bg.setGeometry(lx1, ly1, lw, bg_h)
             bg.setStyleSheet("background: rgba(8,8,8,200); border-radius: 4px;")
             bg.show()
             # bg 作为普通 QLabel 不加入 _labels 列表（不需要颜色更新），
@@ -278,23 +381,27 @@ class TextOverlayWindow(QWidget):
 
             # 若开启"显示原文"，在方块上方叠一行小字原文
             if show_orig and orig_text:
-                orig_lbl = OutlinedLabel(orig_text, self, color=ocr_color)
-                orig_lbl.setFont(QFont("Microsoft YaHei UI",
-                                       max(7, int(lh * 0.28))))
+                orig_lbl = OutlinedLabel(orig_text, self, color=ocr_color, margins=(1, 0, 1, 0))
+                orig_font = self._fit_font_size(orig_text, lw - 8, max(lh - 8, 10),
+                                                min_size=8, max_size=max(10, int(lh * 0.9)))
+                orig_lbl.setFont(QFont("Microsoft YaHei UI", orig_font))
                 orig_lbl.setWordWrap(True)
                 orig_lbl.setAlignment(Qt.AlignCenter)
-                orig_lbl.setGeometry(lx1, max(0, ly1 - int(lh * 0.4)),
-                                     lw, int(lh * 0.4))
+                orig_lbl.setGeometry(lx1, ly1, lw, lh)
                 orig_lbl.show()
                 self._labels.append(orig_lbl)
 
             # 译文
-            trans_lbl = OutlinedLabel(trans_text, self, color=trans_color)
-            font_size = max(8, int(lh * 0.45))
+            trans_lbl = OutlinedLabel(trans_text, self, color=trans_color, margins=(1, 0, 1, 0))
+            trans_h = lh if show_orig else lh
+            trans_y = ly1 + (lh if show_orig else 0)
+            max_font = max(10, int(trans_h * (1.2 if show_orig else 1.0)))
+            font_size = self._fit_font_size(trans_text, lw - 8, max(trans_h - 8, 10),
+                                            min_size=8, max_size=max_font)
             trans_lbl.setFont(QFont("Microsoft YaHei UI", font_size))
             trans_lbl.setWordWrap(True)
             trans_lbl.setAlignment(Qt.AlignCenter)
-            trans_lbl.setGeometry(lx1, ly1, lw, lh)
+            trans_lbl.setGeometry(lx1, trans_y, lw, trans_h)
             trans_lbl.show()
             self._labels.append(trans_lbl)
 
@@ -436,6 +543,7 @@ class SubtitleOverlay(QWidget):
         self.input_signal.triggered.connect(self.capture_task)
         self.last_trigger_time = 0
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
+        self._latest_ocr_image_size: tuple[int, int] | None = None
 
         self.update_window_flags()
 
@@ -638,12 +746,25 @@ class SubtitleOverlay(QWidget):
 
     # ── 截图主流程 ──
 
+    def _reset_text_overlay_before_capture(self):
+        """
+        下一次截图前先清掉旧贴字浮层，避免模型反复识别自己上一次贴出来的文本。
+        """
+        if self.text_overlay and isValid(self.text_overlay):
+            self.text_overlay.clear_items()
+            self.text_overlay.close()
+            self.text_overlay = None
+            QApplication.processEvents()
+
     def capture_task(self):
         if self.is_processing: return
-        if not self.cfg.get("window_visible", True): return
 
         step1_start = time.perf_counter()
         try:
+            # 贴字模式下，截图前先移除已有贴字窗口，防止出现循环识别
+            if self.cfg.get("use_overlay_ocr", False):
+                self._reset_text_overlay_before_capture()
+
             was_visible = self.isVisible()
             should_hide = self.cfg.get("auto_hide", True)
             if should_hide and was_visible:
@@ -701,6 +822,8 @@ class SubtitleOverlay(QWidget):
 
             pix.save("debug_current_vision.jpg", "JPEG", 80)
 
+            self._latest_ocr_image_size = (pix.width(), pix.height())
+
             buf = QBuffer()
             buf.open(QIODevice.WriteOnly)
             pix.save(buf, "JPEG", 75)
@@ -742,7 +865,7 @@ class SubtitleOverlay(QWidget):
     def on_overlay_ready(self, items: list):
         """贴字翻译：将带坐标的译文更新到屏幕浮层"""
         if self.text_overlay and isValid(self.text_overlay):
-            self.text_overlay.update_items(items)
+            self.text_overlay.update_items(items, self._latest_ocr_image_size)
         # 字幕条显示"贴字翻译已更新"简短提示
         summary = " | ".join(it.get("translated", it["text"])[:20] for it in items[:3])
         if summary:
@@ -880,24 +1003,21 @@ class SettingInterface(ScrollArea):
         self.trans_color_btn = ColorButton("#FFFFFF")
         self.trans_color_card.addWidget(self.trans_color_btn)
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card):
+        self.overlay_min_h_card = CustomSettingCard(
+            FIF.TEXT,
+            "最小贴字文本框高度",
+            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
+            self.appear_group
+        )
+        self.overlay_min_h_spin = DoubleSpinBox()
+        self.overlay_min_h_spin.setRange(10, 200)
+        self.overlay_min_h_spin.setSingleStep(2)
+        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
+
+        for card in (self.show_ocr_card, self.ocr_color_card,
+                     self.trans_color_card, self.overlay_min_h_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
-
-        # ── AI 模型配置 ──
-        self.model_group = SettingCardGroup("AI 模型配置", self.view)
-
-        self.ocr_card = CustomSettingCard(FIF.CODE, "OCR 识别模型", "视觉模型，用于提取图片文字", self.model_group)
-        self.ocr_edit = LineEdit()
-        self.ocr_card.addWidget(self.ocr_edit)
-
-        self.llm_card = CustomSettingCard(FIF.CHAT, "LLM 翻译模型", "语言模型，用于文本润色", self.model_group)
-        self.llm_edit = LineEdit()
-        self.llm_card.addWidget(self.llm_edit)
-
-        self.model_group.addSettingCard(self.ocr_card)
-        self.model_group.addSettingCard(self.llm_card)
-        self.layout.addWidget(self.model_group)
 
         # ── 性能与策略 ──
         self.perf_group = SettingCardGroup("性能与策略", self.view)
@@ -915,13 +1035,6 @@ class SettingInterface(ScrollArea):
         self.sw_ocr = SwitchButton()
         self.ocr_sw_card.addWidget(self.sw_ocr)
 
-        self.overlay_ocr_card = CustomSettingCard(
-            FIF.PIN, "贴字翻译（需要模型支持）",
-            "在原文位置叠加译文，需使用 deepseek-ocr 类模型",
-            self.perf_group)
-        self.sw_overlay_ocr = SwitchButton()
-        self.overlay_ocr_card.addWidget(self.sw_overlay_ocr)
-
         self.llm_sw_card = CustomSettingCard(FIF.EDIT, "启用智能翻译润色", "关闭则仅显示原始 OCR 内容", self.perf_group)
         self.sw_llm = SwitchButton()
         self.llm_sw_card.addWidget(self.sw_llm)
@@ -931,7 +1044,7 @@ class SettingInterface(ScrollArea):
         self.copy_sw_card.addWidget(self.sw_copy)
 
         for card in (self.scale_card, self.stream_card, self.ocr_sw_card,
-                     self.overlay_ocr_card, self.llm_sw_card, self.copy_sw_card):
+                     self.llm_sw_card, self.copy_sw_card):
             self.perf_group.addSettingCard(card)
         self.layout.addWidget(self.perf_group)
 
@@ -942,8 +1055,6 @@ class SettingInterface(ScrollArea):
         self.prompt_edit.setFixedHeight(100)
         self.layout.addWidget(self.prompt_edit)
 
-        self.save_btn = PrimaryPushButton(FIF.SAVE, "保存所有配置", self.view)
-        self.layout.addWidget(self.save_btn)
         self.layout.addStretch(1)
 
         self.setWidget(self.view)
@@ -1012,9 +1123,7 @@ class HomeInterface(ScrollArea):
         # 启停按钮
         self.btn_layout = QHBoxLayout()
         self.refresh_btn = PushButton(FIF.SYNC, "刷新窗口列表", self.view)
-        self.start_btn   = PrimaryPushButton(FIF.PLAY, "启动", self.view)
         self.btn_layout.addWidget(self.refresh_btn)
-        self.btn_layout.addWidget(self.start_btn)
         self.layout.addLayout(self.btn_layout)
         self.layout.addStretch(1)
 
@@ -1049,6 +1158,137 @@ class HomeInterface(ScrollArea):
         return QApplication.primaryScreen()
 
 
+class AISettingInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("aiSettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.ocr_group = SettingCardGroup("OCR 配置", self.view)
+        self.ocr_model_card = CustomSettingCard(FIF.CODE, "OCR 识别模型", "视觉模型，用于提取图片文字", self.ocr_group)
+        self.ocr_model_edit = LineEdit()
+        self.ocr_model_card.addWidget(self.ocr_model_edit)
+
+        self.ocr_api_card = CustomSettingCard(FIF.LINK, "OCR API", "默认本地 Ollama /api/generate", self.ocr_group)
+        self.ocr_api_edit = LineEdit()
+        self.ocr_api_card.addWidget(self.ocr_api_edit)
+
+        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_edit = LineEdit()
+        self.ocr_key_card.addWidget(self.ocr_key_edit)
+
+        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card):
+            self.ocr_group.addSettingCard(card)
+        self.layout.addWidget(self.ocr_group)
+
+        self.llm_group = SettingCardGroup("LLM 配置", self.view)
+        self.llm_model_card = CustomSettingCard(FIF.CHAT, "LLM 翻译模型", "语言模型，用于文本润色", self.llm_group)
+        self.llm_model_edit = LineEdit()
+        self.llm_model_card.addWidget(self.llm_model_edit)
+
+        self.llm_api_card = CustomSettingCard(FIF.LINK, "LLM API", "默认本地 Ollama /api/generate", self.llm_group)
+        self.llm_api_edit = LineEdit()
+        self.llm_api_card.addWidget(self.llm_api_edit)
+
+        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_edit = LineEdit()
+        self.llm_key_card.addWidget(self.llm_key_edit)
+
+        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card):
+            self.llm_group.addSettingCard(card)
+        self.layout.addWidget(self.llm_group)
+
+        self.layout.addStretch(1)
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+
+class OverlaySettingInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("overlaySettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.overlay_group = SettingCardGroup("贴字设置", self.view)
+
+        self.sw_overlay_card = CustomSettingCard(
+            FIF.PIN,
+            "启用贴字翻译",
+            "在原文位置叠加译文（需 deepseek-ocr 类模型）",
+            self.overlay_group
+        )
+        self.sw_overlay_ocr = SwitchButton()
+        self.sw_overlay_card.addWidget(self.sw_overlay_ocr)
+
+        self.sw_debug_box_card = CustomSettingCard(
+            FIF.ZOOM,
+            "显示 OCR 原始框",
+            "贴字模式下额外显示模型返回的检测框（红框）",
+            self.overlay_group
+        )
+        self.sw_overlay_boxes = SwitchButton()
+        self.sw_debug_box_card.addWidget(self.sw_overlay_boxes)
+
+        self.sw_auto_merge_card = CustomSettingCard(
+            FIF.ALIGNMENT,
+            "自动识别换行",
+            "开启后，低高度文本行会按规则拼接后再送给下游任务",
+            self.overlay_group
+        )
+        self.sw_auto_merge = SwitchButton()
+        self.sw_auto_merge_card.addWidget(self.sw_auto_merge)
+
+        self.min_line_h_card = CustomSettingCard(
+            FIF.TEXT,
+            "最小换行高度",
+            "小于该高度的文本框会被视作可拼接行",
+            self.overlay_group
+        )
+        self.min_line_h_spin = DoubleSpinBox()
+        self.min_line_h_spin.setRange(1, 300)
+        self.min_line_h_spin.setSingleStep(1)
+        self.min_line_h_card.addWidget(self.min_line_h_spin)
+
+        self.joiner_card = CustomSettingCard(
+            FIF.FONT,
+            "拼接字符",
+            "用于拼接被视作同一句的文本，英文可用空格，中日文可设为空",
+            self.overlay_group
+        )
+        self.joiner_edit = LineEdit()
+        self.joiner_card.addWidget(self.joiner_edit)
+
+        for card in (
+            self.sw_overlay_card,
+            self.sw_debug_box_card,
+            self.sw_auto_merge_card,
+            self.min_line_h_card,
+            self.joiner_card,
+        ):
+            self.overlay_group.addSettingCard(card)
+
+        self.layout.addWidget(self.overlay_group)
+        self.layout.addStretch(1)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("background: transparent; border: none;")
+
+        self.sw_auto_merge.checkedChanged.connect(self._sync_merge_controls)
+        self._sync_merge_controls(self.sw_auto_merge.isChecked())
+
+    def _sync_merge_controls(self, checked: bool):
+        self.min_line_h_card.setVisible(checked)
+        self.joiner_card.setVisible(checked)
+
+
 # ══════════════════════════════════════════════
 # 主窗口
 # ══════════════════════════════════════════════
@@ -1064,9 +1304,38 @@ class MainWindow(FluentWindow):
 
         self.home_page    = HomeInterface(self)
         self.setting_page = SettingInterface(self)
+        self.ai_page      = AISettingInterface(self)
+        self.overlay_page = OverlaySettingInterface(self)
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
+        self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
+        self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+
+        self.start_nav_btn = PrimaryPushButton("启动翻译", self)
+        self.save_nav_btn = PushButton("保存设置", self)
+        self.start_nav_btn.setFixedWidth(140)
+        self.save_nav_btn.setFixedWidth(140)
+        nav_widget_supported = hasattr(self, "navigationInterface") and hasattr(self.navigationInterface, "addWidget")
+        if nav_widget_supported:
+            self.navigationInterface.addWidget(
+                routeKey="start-translate",
+                widget=self.start_nav_btn,
+                onClick=self.toggle_overlay,
+                position=NavigationItemPosition.BOTTOM
+            )
+            self.navigationInterface.addWidget(
+                routeKey="save-config",
+                widget=self.save_nav_btn,
+                onClick=self.save_all,
+                position=NavigationItemPosition.BOTTOM
+            )
+        else:
+            # 退路：若当前 qfluentwidgets 版本不支持侧栏挂件，则保留按钮可用性
+            self.home_page.layout.addWidget(self.start_nav_btn)
+            self.setting_page.layout.addWidget(self.save_nav_btn)
+            self.start_nav_btn.clicked.connect(self.toggle_overlay)
+            self.save_nav_btn.clicked.connect(self.save_all)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1080,13 +1349,27 @@ class MainWindow(FluentWindow):
 
         # 信号绑定
         self.home_page.refresh_btn.clicked.connect(self.refresh_windows)
-        self.home_page.start_btn.clicked.connect(self.toggle_overlay)
         self.home_page.region_btn.clicked.connect(self.open_region_selector)
         self.home_page.clear_region_btn.clicked.connect(self.clear_region)
-        self.setting_page.save_btn.clicked.connect(self.save_all)
 
         self.refresh_windows()
         self.overlay = None
+        self._refresh_start_button_style()
+
+    def _refresh_start_button_style(self):
+        running = self.overlay is not None
+        if running:
+            self.start_nav_btn.setText("停止翻译")
+            self.start_nav_btn.setStyleSheet(
+                "QPushButton{background:#b42318;color:white;border-radius:6px;padding:6px 12px;}"
+                "QPushButton:hover{background:#cf3024;}"
+            )
+        else:
+            self.start_nav_btn.setText("启动翻译")
+            self.start_nav_btn.setStyleSheet(
+                "QPushButton{background:#0e9f6e;color:white;border-radius:6px;padding:6px 12px;}"
+                "QPushButton:hover{background:#13b87f;}"
+            )
 
     # ── 设置加载 ──
 
@@ -1117,16 +1400,34 @@ class MainWindow(FluentWindow):
         s.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
         s.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         s.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
+        s.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
 
-        s.ocr_edit.setText(self.cfg.get("ocr_model", ""))
-        s.llm_edit.setText(self.cfg.get("llm_model", ""))
+        self.ai_page.ocr_model_edit.setText(self.cfg.get("ocr_model", ""))
+        self.ai_page.ocr_api_edit.setText(self.cfg.get("ocr_api", "http://localhost:11434/api/generate"))
+        self.ai_page.ocr_key_edit.setText(self.cfg.get("ocr_key", ""))
+        self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
+        self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
+        self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
         s.scale_spin.setValue(self.cfg.get("scale_factor", 0.5))
         s.sw_stream.setChecked(self.cfg.get("use_stream", False))
         s.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
         s.sw_llm.setChecked(self.cfg.get("use_llm", True))
         s.sw_copy.setChecked(self.cfg.get("auto_copy", False))
-        s.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
         s.prompt_edit.setText(self.cfg.get("llm_prompt", ""))
+
+        self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
+        self.overlay_page.sw_overlay_boxes.setChecked(
+            self.cfg.get("show_overlay_debug_boxes", False)
+        )
+        self.overlay_page.sw_auto_merge.setChecked(
+            self.cfg.get("overlay_auto_merge_lines", False)
+        )
+        self.overlay_page.min_line_h_spin.setValue(
+            self.cfg.get("overlay_min_line_height", 40)
+        )
+        self.overlay_page.joiner_edit.setText(
+            self.cfg.get("overlay_joiner", " ")
+        )
 
     def _sync_region_ui(self):
         region = self.cfg.get("capture_region")
@@ -1158,14 +1459,23 @@ class MainWindow(FluentWindow):
             "show_ocr_text":       s.sw_show_ocr.isChecked(),
             "ocr_color":           s.ocr_color_btn.color(),
             "trans_color":         s.trans_color_btn.color(),
-            "ocr_model":           s.ocr_edit.text(),
-            "llm_model":           s.llm_edit.text(),
+            "overlay_min_box_height": int(s.overlay_min_h_spin.value()),
+            "ocr_model":           self.ai_page.ocr_model_edit.text(),
+            "ocr_api":             self.ai_page.ocr_api_edit.text(),
+            "ocr_key":             self.ai_page.ocr_key_edit.text(),
+            "llm_model":           self.ai_page.llm_model_edit.text(),
+            "llm_api":             self.ai_page.llm_api_edit.text(),
+            "llm_key":             self.ai_page.llm_key_edit.text(),
             "scale_factor":        s.scale_spin.value(),
             "use_stream":          s.sw_stream.isChecked(),
             "use_ocr":             s.sw_ocr.isChecked(),
             "use_llm":             s.sw_llm.isChecked(),
             "auto_copy":           s.sw_copy.isChecked(),
-            "use_overlay_ocr":     s.sw_overlay_ocr.isChecked(),
+            "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
+            "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
+            "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
+            "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
+            "overlay_joiner": self.overlay_page.joiner_edit.text(),
             "llm_prompt":          s.prompt_edit.toPlainText(),
             "target_hwnd":         self.home_page.combo.currentData(),
             "capture_screen_name": self.home_page.screen_combo.currentData() or "",
@@ -1213,11 +1523,11 @@ class MainWindow(FluentWindow):
             self.overlay = SubtitleOverlay(self.cfg)
             if self.cfg.get("window_visible", True):
                 self.overlay.show()
-            self.home_page.start_btn.setText("停止翻译")
+            self._refresh_start_button_style()
         else:
             self.overlay.close()
             self.overlay = None
-            self.home_page.start_btn.setText("启动翻译")
+            self._refresh_start_button_style()
 
     # ── 区域框选 ──
 
