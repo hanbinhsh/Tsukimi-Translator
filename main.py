@@ -225,13 +225,8 @@ class TranslationThread(QThread):
             continuation = TranslationThread._looks_like_sentence_continuation(
                 current.get("text", ""),
                 item.get("text", ""),
-<<<<<<< codex/add-options-for-text-processing-5zrdde
                 line_start_chars,
                 line_end_chars,
-=======
-                self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
-                self.config.get("line_end_chars", ".!?。！？…"),
->>>>>>> main
             )
 
             should_merge = near_line and (

@@ -129,6 +129,7 @@ class OllamaTranslator:
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
         ).json()
         raw = res.get("response", "").strip()
+        print(f"[overlay_ocr 原始模型输出全文]\n{raw}\n[overlay_ocr 原始模型输出结束]")
         items = self._parse_grounding_ocr(raw)
         if not items:
             print(f"[overlay_ocr] 原始模型输出:\n{raw}")
@@ -202,7 +203,7 @@ class OllamaTranslator:
                 continue
             ref_text = (m.group(1) or '').strip()
             tail_text = (m.group(6) or '').strip()
-            text = ref_text if ref_text else tail_text
+            text = tail_text if tail_text else ref_text
             if text:
                 results.append({"text": text, "bbox": bbox})
 
