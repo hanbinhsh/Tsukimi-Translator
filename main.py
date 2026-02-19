@@ -1139,7 +1139,7 @@ class AISettingInterface(ScrollArea):
         self.ocr_api_edit = LineEdit()
         self.ocr_api_card.addWidget(self.ocr_api_edit)
 
-        self.ocr_key_card = CustomSettingCard(FIF.LOCK, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
+        self.ocr_key_card = CustomSettingCard(FIF.FINGERPRINT, "OCR API Key", "默认空，留空则不附带 Authorization", self.ocr_group)
         self.ocr_key_edit = LineEdit()
         self.ocr_key_card.addWidget(self.ocr_key_edit)
 
@@ -1161,7 +1161,7 @@ class AISettingInterface(ScrollArea):
         self.llm_api_edit = LineEdit()
         self.llm_api_card.addWidget(self.llm_api_edit)
 
-        self.llm_key_card = CustomSettingCard(FIF.LOCK, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
+        self.llm_key_card = CustomSettingCard(FIF.FINGERPRINT, "LLM API Key", "默认空，留空则不附带 Authorization", self.llm_group)
         self.llm_key_edit = LineEdit()
         self.llm_key_card.addWidget(self.llm_key_edit)
 
@@ -1203,18 +1203,9 @@ class OverlaySettingInterface(ScrollArea):
         self.trans_color_btn = ColorButton("#FFFFFF")
         self.trans_color_card.addWidget(self.trans_color_btn)
 
-        self.overlay_min_h_card = CustomSettingCard(
-            FIF.TEXT,
-            "最小贴字文本框高度",
-            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
-            self.appear_group
-        )
-        self.overlay_min_h_spin = DoubleSpinBox()
-        self.overlay_min_h_spin.setRange(10, 200)
-        self.overlay_min_h_spin.setSingleStep(2)
-        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
+        
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.overlay_min_h_card):
+        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
 
@@ -1228,6 +1219,17 @@ class OverlaySettingInterface(ScrollArea):
         )
         self.sw_overlay_ocr = SwitchButton()
         self.sw_overlay_card.addWidget(self.sw_overlay_ocr)
+
+        self.overlay_min_h_card = CustomSettingCard(
+            FIF.BACK_TO_WINDOW,
+            "最小贴字文本框高度",
+            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
+            self.appear_group
+        )
+        self.overlay_min_h_spin = DoubleSpinBox()
+        self.overlay_min_h_spin.setRange(10, 200)
+        self.overlay_min_h_spin.setSingleStep(2)
+        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
 
         self.sw_debug_box_card = CustomSettingCard(
             FIF.ZOOM,
@@ -1248,7 +1250,7 @@ class OverlaySettingInterface(ScrollArea):
         self.sw_auto_merge_card.addWidget(self.sw_auto_merge)
 
         self.min_line_h_card = CustomSettingCard(
-            FIF.TEXT,
+            FIF.BACK_TO_WINDOW,
             "最小换行高度",
             "小于该高度的文本框会被视作可拼接行",
             self.overlay_group
@@ -1273,6 +1275,7 @@ class OverlaySettingInterface(ScrollArea):
             self.sw_auto_merge_card,
             self.min_line_h_card,
             self.joiner_card,
+            self.overlay_min_h_card
         ):
             self.overlay_group.addSettingCard(card)
 
