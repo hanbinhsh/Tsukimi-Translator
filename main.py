@@ -910,15 +910,29 @@ class SubtitleOverlay(QWidget):
                     Qt.KeepAspectRatio, Qt.SmoothTransformation
                 )
 
-            pix.save("debug_current_vision.jpg", "JPEG", 80)
-
             self._latest_ocr_image_size = (pix.width(), pix.height())
 
+            img_format = str(self.cfg.get("ocr_image_format", "PNG")).upper()
+            if img_format not in ("PNG", "JPEG", "JPG"):
+                img_format = "PNG"
+
+            # OCR 请求与调试文件使用同一份编码字节，避免二次压缩带来的识别差异。
             buf = QBuffer()
             buf.open(QIODevice.WriteOnly)
-            pix.save(buf, "JPEG", 75)
-            img_bytes = buf.data().data()
+            if img_format in ("JPEG", "JPG"):
+                jpeg_q = int(self.cfg.get("ocr_image_quality", 95))
+                jpeg_q = max(1, min(100, jpeg_q))
+                pix.save(buf, "JPEG", jpeg_q)
+                debug_path = "debug_current_vision.jpg"
+            else:
+                pix.save(buf, "PNG")
+                debug_path = "debug_current_vision.png"
+
+            img_bytes = bytes(buf.data())
             buf.close()
+
+            with open(debug_path, "wb") as f:
+                f.write(img_bytes)
 
             self.step1_duration = time.perf_counter() - step1_start
             self.is_processing  = True

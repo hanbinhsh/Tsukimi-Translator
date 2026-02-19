@@ -16,6 +16,8 @@ DEFAULT_CONFIG = {
     "ocr_temperature": 0,
     "ocr_seed": 0,
     "ocr_num_predict": 4096,
+    "ocr_image_format": "PNG",   # OCR 上传图片编码：PNG(无损) / JPEG
+    "ocr_image_quality": 95,       # JPEG 编码质量（仅 JPEG 生效）
     "use_ocr": True,
     "use_llm": True,
     "use_stream": False,            # 是否流式输出
