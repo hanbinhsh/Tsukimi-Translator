@@ -5,8 +5,21 @@ import json
 
 class OllamaTranslator:
     def __init__(self, config):
-        self.url = "http://localhost:11434/api/generate"
         self.cfg = config
+
+    def _api_for(self, service: str) -> str:
+        default = "http://localhost:11434/api/generate"
+        if service == "ocr":
+            return self.cfg.get("ocr_api", default).strip() or default
+        return self.cfg.get("llm_api", default).strip() or default
+
+    def _headers_for(self, service: str) -> dict:
+        key = (self.cfg.get("ocr_key", "") if service == "ocr"
+               else self.cfg.get("llm_key", "")).strip()
+        headers = {"Content-Type": "application/json"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        return headers
 
     # ──────────────────────────────────────────
     # 独立方法（供 TranslationThread 分步调用）
@@ -17,23 +30,32 @@ class OllamaTranslator:
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self.cfg["ocr_model"],
-            "prompt": "Extract all text from this image. Output only the text content, no explanations.",
+            "prompt": self.cfg.get(
+                "ocr_prompt",
+                "Extract all text from this image. Output only the text content, no explanations."
+            ),
             "images": [b64],
             "stream": False,
         }
-        res = requests.post(self.url, json=payload, timeout=20).json()
+        res = requests.post(
+            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
+        ).json()
         return res.get("response", "").strip()
 
     def run_llm(self, text: str, image_bytes: bytes = None) -> str:
         """调用 LLM 进行翻译/润色（非流式），返回结果字符串"""
         payload = self._build_llm_payload(text, image_bytes, stream=False)
-        res = requests.post(self.url, json=payload, timeout=30).json()
+        res = requests.post(
+            self._api_for("llm"), json=payload, headers=self._headers_for("llm"), timeout=30
+        ).json()
         return res.get("response", "").strip()
 
     def run_llm_stream(self, text: str, image_bytes: bytes = None):
         """调用 LLM 进行翻译/润色（流式），逐 token yield 字符串片段"""
         payload = self._build_llm_payload(text, image_bytes, stream=True)
-        with requests.post(self.url, json=payload, timeout=60, stream=True) as resp:
+        with requests.post(
+            self._api_for("llm"), json=payload, headers=self._headers_for("llm"), timeout=60, stream=True
+        ) as resp:
             for line in resp.iter_lines():
                 if not line:
                     continue
@@ -103,7 +125,9 @@ class OllamaTranslator:
             "images": [b64],
             "stream": False,
         }
-        res = requests.post(self.url, json=payload, timeout=30).json()
+        res = requests.post(
+            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
+        ).json()
         raw = res.get("response", "").strip()
         return self._parse_grounding_ocr(raw)
 
@@ -112,23 +136,27 @@ class OllamaTranslator:
         """
         解析 deepseek-ocr grounding 格式：
             <|ref|>text<|/ref|><|det|>[[x1, y1, x2, y2]]<|/det|>
-            实际文本内容
 
-        坐标约定：deepseek 系列通常输出 0-1000 归一化坐标。
+        兼容两种输出：
+          1) 文本在 <|ref|> 标签内（deepseek-ocr 常见）
+          2) 文本在 det 行后续普通文本中（部分变体）
         返回：[{"text": str, "bbox": [x1, y1, x2, y2]}, ...]
         """
         import re
+
         results = []
         pattern = re.compile(
-            r'<\|ref\|>.*?<\|/ref\|>'          # <|ref|>text<|/ref|>
-            r'<\|det\|>\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]<\|/det\|>'  # bbox
-            r'\n(.+?)(?=\n<\|ref\|>|$)',        # 文本到下一块或结尾
+            r'<\|ref\|>(.*?)<\|/ref\|>\s*'
+            r'<\|det\|>\[\[(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\]\]<\|/det\|>'
+            r'(?:\n([^\n<].*?))?(?=\n<\|ref\|>|$)',
             re.DOTALL
         )
         for m in pattern.finditer(raw):
-            x1, y1, x2, y2 = (int(m.group(1)), int(m.group(2)),
-                               int(m.group(3)), int(m.group(4)))
-            text = m.group(5).strip()
+            x1, y1, x2, y2 = (int(m.group(2)), int(m.group(3)),
+                              int(m.group(4)), int(m.group(5)))
+            ref_text = (m.group(1) or '').strip()
+            tail_text = (m.group(6) or '').strip()
+            text = ref_text if ref_text else tail_text
             if text:
                 results.append({"text": text, "bbox": [x1, y1, x2, y2]})
         return results
