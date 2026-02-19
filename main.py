@@ -1620,25 +1620,39 @@ class AboutInterface(ScrollArea):
         try:
             url = f"https://api.github.com/repos/{self.repo_api}/releases/latest"
             resp = requests.get(url, timeout=8)
+            changelog = ""
+            release_url = self.repo_url
             if resp.status_code == 404:
                 # 没有 release 时，降级读取最新 tag
                 tag_resp = requests.get(f"https://api.github.com/repos/{self.repo_api}/tags", timeout=8)
                 tag_resp.raise_for_status()
                 tags = tag_resp.json()
                 latest = tags[0]["name"] if tags else "unknown"
+                release_url = f"{self.repo_url}/releases"
+                changelog = "该版本暂无 Release 日志（仓库可能仅使用 Tags 发布）。"
             else:
                 resp.raise_for_status()
                 data = resp.json()
                 latest = data.get("tag_name") or data.get("name") or "unknown"
+                release_url = data.get("html_url") or release_url
+                changelog = (data.get("body") or "").strip() or "该版本未提供更新日志。"
 
             if latest.lstrip("vV") == self.current_version.lstrip("vV"):
                 InfoBar.success("检查更新", f"当前已是最新版本：{self.current_version}", parent=self)
             else:
-                InfoBar.warning(
-                    "发现新版本",
-                    f"当前版本：{self.current_version}，最新版本：{latest}",
-                    parent=self,
+                content = (
+                    f"当前版本：{self.current_version}\n"
+                    f"最新版本：{latest}\n\n"
+                    f"更新日志：\n{changelog}\n\n"
+                    "是否前往更新页面？"
                 )
+                box = MessageBox("发现新版本", content, self)
+                box.yesButton.setText("立即更新")
+                box.cancelButton.setText("稍后")
+                box.setClosableOnMaskClicked(True)
+                box.setDraggable(True)
+                if box.exec():
+                    QDesktopServices.openUrl(QUrl(release_url))
         except Exception as e:
             InfoBar.error("检查更新失败", f"无法连接 GitHub API：{e}", parent=self)
 
