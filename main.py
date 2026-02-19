@@ -6,7 +6,7 @@ import requests
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QFrame,
-                                QSizePolicy)
+                                QSizePolicy, QScrollArea)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
 from shiboken6 import isValid
@@ -79,6 +79,26 @@ def resource_path(relative_path):
 
 class InputSignal(QObject):
     triggered = Signal()
+
+
+class ConsoleSignal(QObject):
+    message = Signal(str)
+
+
+class StreamForwarder:
+    """将 stdout/stderr 同步到应用内控制台。"""
+
+    def __init__(self, signal_obj: ConsoleSignal, original_stream):
+        self._signal = signal_obj
+        self._original = original_stream
+
+    def write(self, text):
+        if text:
+            self._signal.message.emit(str(text))
+            self._original.write(text)
+
+    def flush(self):
+        self._original.flush()
 
 
 class ColorButton(QPushButton):
@@ -227,10 +247,10 @@ class PromptSettingCard(CardWidget):
 # ══════════════════════════════════════════════
 
 class TranslationThread(QThread):
-    ocr_ready     = Signal(str)        # OCR 提取完毕，发出原文
-    partial_text  = Signal(str)        # 流式：累计译文
-    finished      = Signal(str, float) # 最终译文, AI 总耗时
-    overlay_ready = Signal(list)       # 贴字模式：[{"text","translated","bbox"}, ...]
+    ocr_ready     = Signal(str)            # OCR 提取完毕，发出原文
+    partial_text  = Signal(str)            # 流式：累计译文
+    finished      = Signal(str, float, object)  # 最终译文, AI 总耗时, 调试信息
+    overlay_ready = Signal(list)           # 贴字模式：[{"text","translated","bbox"}, ...]
 
     def __init__(self, image_bytes, config):
         super().__init__()
@@ -335,11 +355,21 @@ class TranslationThread(QThread):
     def run(self):
         ai_start = time.perf_counter()
         worker = OllamaTranslator(self.config)
+        debug_info = {
+            "ocr_duration": 0.0,
+            "llm_duration": 0.0,
+            "ocr_raw": "",
+            "ocr_text": "",
+            "model_text": "",
+        }
 
         # ══ 贴字翻译模式 ══
         if self.config.get("use_overlay_ocr", False):
             try:
-                items = worker.run_ocr_with_coords(self.image_bytes)
+                ocr_start = time.perf_counter()
+                items, overlay_raw = worker.run_ocr_with_coords(self.image_bytes, return_raw=True)
+                debug_info["ocr_duration"] = time.perf_counter() - ocr_start
+                debug_info["ocr_raw"] = (overlay_raw or "")
                 if items:
                     if self.config.get("overlay_auto_merge_lines", False):
                         items = self._merge_overlay_lines(
@@ -350,17 +380,25 @@ class TranslationThread(QThread):
                             self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
                             self.config.get("line_end_chars", ".!?。！？…"),
                         )
-                    # 发出原文供 OCR 标签显示（合并所有文本）
-                    self.ocr_ready.emit("\n".join(it["text"] for it in items))
+                    debug_info["ocr_text"] = "\n".join(it.get("text", "") for it in items).strip()
+                    self.ocr_ready.emit(debug_info["ocr_text"])
+
                     if self.config.get("use_llm", True):
+                        llm_start = time.perf_counter()
                         items = worker.run_llm_batch(items)
+                        debug_info["llm_duration"] = time.perf_counter() - llm_start
                     else:
                         for it in items:
-                            it["translated"] = it["text"]
+                            it["translated"] = it.get("text", "")
+
+                    debug_info["model_text"] = "\n\n".join(
+                        (it.get("translated") or it.get("text", "")).strip()
+                        for it in items
+                        if (it.get("translated") or it.get("text", "")).strip()
+                    )
                     self.overlay_ready.emit(items)
-                    self.finished.emit("", time.perf_counter() - ai_start)
+                    self.finished.emit("", time.perf_counter() - ai_start, debug_info)
                     return
-                # 模型不支持贴字格式 → 降级到普通模式，继续往下走
                 print("[overlay_ocr] 模型未返回坐标格式，降级为普通 OCR")
             except Exception as e:
                 print(f"[overlay_ocr error] {e}")
@@ -370,11 +408,16 @@ class TranslationThread(QThread):
         final_text = ""
         try:
             if self.config.get("use_ocr", True):
-                ocr_text = worker.run_ocr(self.image_bytes)
+                ocr_start = time.perf_counter()
+                ocr_text, ocr_raw = worker.run_ocr(self.image_bytes, return_raw=True)
+                debug_info["ocr_duration"] = time.perf_counter() - ocr_start
+                debug_info["ocr_raw"] = (ocr_raw or "")
+                debug_info["ocr_text"] = ocr_text
                 self.ocr_ready.emit(ocr_text)
 
             if self.config.get("use_llm", True):
                 img = None if ocr_text else self.image_bytes
+                llm_start = time.perf_counter()
                 if self.config.get("use_stream", False):
                     cumulative = ""
                     for chunk in worker.run_llm_stream(ocr_text, img):
@@ -383,13 +426,15 @@ class TranslationThread(QThread):
                     final_text = cumulative
                 else:
                     final_text = worker.run_llm(ocr_text, img)
+                debug_info["llm_duration"] = time.perf_counter() - llm_start
             else:
                 final_text = ocr_text
 
         except Exception as e:
             final_text = f"Error: {e}"
 
-        self.finished.emit(final_text, time.perf_counter() - ai_start)
+        debug_info["model_text"] = final_text
+        self.finished.emit(final_text, time.perf_counter() - ai_start, debug_info)
 
 
 # ══════════════════════════════════════════════
@@ -714,6 +759,7 @@ class SubtitleOverlay(QWidget):
         self.last_trigger_time = 0
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
         self._latest_ocr_image_size: tuple[int, int] | None = None
+        self._latest_debug_info: dict = {}
 
         self.update_window_flags()
 
@@ -726,23 +772,37 @@ class SubtitleOverlay(QWidget):
         self.main_layout.setContentsMargins(14, 10, 14, 10)
         self.main_layout.setSpacing(4)
 
+        self.text_scroll = QScrollArea(self)
+        self.text_scroll.setWidgetResizable(True)
+        self.text_scroll.setFrameShape(QFrame.NoFrame)
+        self.text_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.text_scroll.setStyleSheet("background: transparent; border: none;")
+
+        self.text_content = QWidget(self.text_scroll)
+        self.text_layout = QVBoxLayout(self.text_content)
+        self.text_layout.setContentsMargins(0, 0, 0, 0)
+        self.text_layout.setSpacing(4)
+
         # OCR 原文标签
-        self.ocr_label = OutlinedLabel("", self, color=self.cfg.get("ocr_color", "#FFFF88"))
+        self.ocr_label = OutlinedLabel("", self.text_content, color=self.cfg.get("ocr_color", "#FFFF88"))
         self.ocr_label.setFont(QFont("Microsoft YaHei UI", 14))
         self.ocr_label.setWordWrap(True)
         self.ocr_label.setFixedWidth(fixed_w)
         self.ocr_label.setAlignment(Qt.AlignCenter)
-        self.ocr_label.setVisible(False)  # 初始隐藏
+        self.ocr_label.setVisible(False)
 
         # 译文标签
-        self.trans_label = OutlinedLabel("正在等待截图...", self, color=self.cfg.get("trans_color", "#FFFFFF"))
+        self.trans_label = OutlinedLabel("正在等待截图...", self.text_content, color=self.cfg.get("trans_color", "#FFFFFF"))
         self.trans_label.setFont(QFont("Microsoft YaHei UI", 18))
         self.trans_label.setWordWrap(True)
         self.trans_label.setFixedWidth(fixed_w)
         self.trans_label.setAlignment(Qt.AlignCenter)
 
-        self.main_layout.addWidget(self.ocr_label)
-        self.main_layout.addWidget(self.trans_label)
+        self.text_layout.addWidget(self.ocr_label)
+        self.text_layout.addWidget(self.trans_label)
+        self.text_scroll.setWidget(self.text_content)
+        self.main_layout.addWidget(self.text_scroll)
+        self._apply_text_max_height()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.capture_task)
@@ -832,7 +892,17 @@ class SubtitleOverlay(QWidget):
         self.ocr_label.setVisible(
             self.cfg.get("show_ocr_text", False) and bool(self.ocr_label.text())
         )
+        self._apply_text_max_height()
         self._adjust_size()
+
+    def _apply_text_max_height(self):
+        max_h = int(self.cfg.get("ui_max_height", 0) or 0)
+        if max_h > 0:
+            self.text_scroll.setMaximumHeight(max_h)
+            self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        else:
+            self.text_scroll.setMaximumHeight(16777215)
+            self.text_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
     def _get_capture_screen(self):
         name = self.cfg.get("capture_screen_name", "")
@@ -1011,8 +1081,9 @@ class SubtitleOverlay(QWidget):
             img_bytes = bytes(buf.data())
             buf.close()
 
-            with open(debug_path, "wb") as f:
-                f.write(img_bytes)
+            if self.cfg.get("save_debug_images", False):
+                with open(debug_path, "wb") as f:
+                    f.write(img_bytes)
 
             self.step1_duration = time.perf_counter() - step1_start
             self.is_processing  = True
@@ -1041,7 +1112,6 @@ class SubtitleOverlay(QWidget):
 
     def on_ocr_ready(self, text: str):
         """OCR 阶段完成，展示原文（若设置开启）"""
-        print(f"[OCR 输出全文]\n{text}\n[OCR 输出结束]")
         clean_text = self._post_process_text(text)
         if self.cfg.get("show_ocr_text", False) and clean_text.strip():
             self.ocr_label.setText(clean_text)
@@ -1059,7 +1129,6 @@ class SubtitleOverlay(QWidget):
             overlay_lines.append(f"{dst}")
         if overlay_lines:
             debug_text = "\n\n".join(overlay_lines)
-            print(f"[贴字模型输出全文]\n{debug_text}\n[贴字模型输出结束]")
             self.trans_label.setText(self._post_process_text(debug_text))
             self._adjust_size()
 
@@ -1070,13 +1139,27 @@ class SubtitleOverlay(QWidget):
             self.trans_label.setText(processed)
             self._adjust_size()
 
-    def on_translated(self, text: str, ai_duration: float):
+    def on_translated(self, text: str, ai_duration: float, debug_info: object):
+        info = debug_info if isinstance(debug_info, dict) else {}
+        ocr_duration = float(info.get("ocr_duration", 0.0) or 0.0)
+        llm_duration = float(info.get("llm_duration", 0.0) or 0.0)
+        model_text = str(info.get("model_text", "") or text or "")
         total = self.step1_duration + ai_duration
-        print(f"\n{'='*40}\n时戳: {time.strftime('%H:%M:%S')}")
-        print(f"截图: {self.step1_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s")
-        print(f"模型输出全文:\n{text}\n{'='*40}")
 
-        processed = self._post_process_text(text)
+        log_lines = [
+            "=" * 40,
+            f"时戳: {time.strftime('%H:%M:%S')}",
+            f"截图: {self.step1_duration:.3f}s  |  OCR: {ocr_duration:.3f}s  |  LLM: {llm_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s",
+        ]
+        if self.cfg.get("log_ocr_raw", False):
+            log_lines.append(f"OCR 原始内容:\n{info.get('ocr_raw', '')}")
+        if self.cfg.get("log_ocr_text", False):
+            log_lines.append(f"OCR 输出全文:\n{info.get('ocr_text', '')}")
+        log_lines.append(f"模型输出全文:\n{model_text}")
+        log_lines.append("=" * 40)
+        print("\n".join(log_lines))
+
+        processed = self._post_process_text(model_text)
         if processed.strip():
             self.trans_label.setText(processed)
             if self.cfg.get("auto_copy"):
@@ -1084,6 +1167,7 @@ class SubtitleOverlay(QWidget):
             self._adjust_size()
 
         self.is_processing = False
+
 
     @staticmethod
     def _remove_blank_lines(text: str) -> str:
@@ -1363,11 +1447,23 @@ class AISettingInterface(ScrollArea):
         self.ocr_ctx_card.addWidget(self.ocr_ctx_spin)
 
         self.ocr_prompt_card = PromptSettingCard(
-            FIF.CAMERA, "OCR 提示词", "普通 OCR 指令（贴字模式不使用）", 90, self.ocr_group
+            FIF.CAMERA, "OCR 提示词", "普通 OCR 指令", 90, self.ocr_group
         )
         self.ocr_prompt_edit = self.ocr_prompt_card.editor
 
-        for card in (self.ocr_model_card, self.ocr_api_card, self.ocr_key_card, self.ocr_ctx_card, self.ocr_prompt_card):
+        self.overlay_ocr_prompt_card = PromptSettingCard(
+            FIF.BRUSH, "贴字 OCR 提示词", "贴字模式下使用的 OCR grounding 指令", 90, self.ocr_group
+        )
+        self.overlay_ocr_prompt_edit = self.overlay_ocr_prompt_card.editor
+
+        for card in (
+            self.ocr_model_card,
+            self.ocr_api_card,
+            self.ocr_key_card,
+            self.ocr_ctx_card,
+            self.ocr_prompt_card,
+            self.overlay_ocr_prompt_card,
+        ):
             self.ocr_group.addSettingCard(card)
         self.layout.addWidget(self.ocr_group)
 
@@ -1429,9 +1525,19 @@ class OverlaySettingInterface(ScrollArea):
         self.trans_color_btn = ColorButton("#FFFFFF")
         self.trans_color_card.addWidget(self.trans_color_btn)
 
-        
+        self.max_height_card = CustomSettingCard(
+            FIF.FULL_SCREEN,
+            "文本框最大高度",
+            "超过该高度时启用滚动，0 表示不限高度",
+            self.appear_group,
+        )
+        self.max_height_spin = DoubleSpinBox()
+        self.max_height_spin.setRange(0, 3000)
+        self.max_height_spin.setSingleStep(20)
+        self.max_height_spin.setDecimals(0)
+        self.max_height_card.addWidget(self.max_height_spin)
 
-        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card):
+        for card in (self.show_ocr_card, self.ocr_color_card, self.trans_color_card, self.max_height_card):
             self.appear_group.addSettingCard(card)
         self.layout.addWidget(self.appear_group)
 
@@ -1445,26 +1551,6 @@ class OverlaySettingInterface(ScrollArea):
         )
         self.sw_overlay_ocr = SwitchButton()
         self.sw_overlay_card.addWidget(self.sw_overlay_ocr)
-
-        self.overlay_prompt_card = PromptSettingCard(
-            FIF.CAMERA,
-            "贴字 OCR 提示词",
-            "用于带坐标 OCR；去掉提示词中的 \\n 可让模型尽量按行输出",
-            90,
-            self.overlay_group
-        )
-        self.overlay_prompt_edit = self.overlay_prompt_card.editor
-
-        self.overlay_min_h_card = CustomSettingCard(
-            FIF.BACK_TO_WINDOW,
-            "最小贴字文本框高度",
-            "贴字模式下每个文本框最小高度 (px)，避免矮字体不可见",
-            self.appear_group
-        )
-        self.overlay_min_h_spin = DoubleSpinBox()
-        self.overlay_min_h_spin.setRange(10, 200)
-        self.overlay_min_h_spin.setSingleStep(2)
-        self.overlay_min_h_card.addWidget(self.overlay_min_h_spin)
 
         self.sw_debug_box_card = CustomSettingCard(
             FIF.ZOOM,
@@ -1536,7 +1622,6 @@ class OverlaySettingInterface(ScrollArea):
 
         for card in (
             self.sw_overlay_card,
-            self.overlay_prompt_card,
             self.sw_debug_box_card,
             self.sw_auto_merge_card,
             self.min_line_h_card,
@@ -1564,6 +1649,90 @@ class OverlaySettingInterface(ScrollArea):
         self.joiner_card.setVisible(checked)
         self.line_start_chars_card.setVisible(checked)
         self.line_end_chars_card.setVisible(checked)
+
+
+class DebugSettingInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("debugSettingInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(15)
+
+        self.debug_group = SettingCardGroup("调试设置", self.view)
+        self.sw_dump_image_card = CustomSettingCard(
+            FIF.CAMERA,
+            "输出调试图片",
+            "开启后，每次截图会在程序目录写入 debug_current_vision 图片",
+            self.debug_group,
+        )
+        self.sw_dump_image = SwitchButton()
+        self.sw_dump_image_card.addWidget(self.sw_dump_image)
+        self.debug_group.addSettingCard(self.sw_dump_image_card)
+
+        self.sw_log_ocr_raw_card = CustomSettingCard(
+            FIF.DOCUMENT,
+            "日志打印 OCR 原始内容",
+            "输出模型返回的原始 OCR 文本（未清洗）",
+            self.debug_group,
+        )
+        self.sw_log_ocr_raw = SwitchButton()
+        self.sw_log_ocr_raw_card.addWidget(self.sw_log_ocr_raw)
+        self.debug_group.addSettingCard(self.sw_log_ocr_raw_card)
+
+        self.sw_log_ocr_text_card = CustomSettingCard(
+            FIF.DOCUMENT,
+            "日志打印 OCR 输出全文",
+            "输出送入后续流程的 OCR 文本",
+            self.debug_group,
+        )
+        self.sw_log_ocr_text = SwitchButton()
+        self.sw_log_ocr_text_card.addWidget(self.sw_log_ocr_text)
+        self.debug_group.addSettingCard(self.sw_log_ocr_text_card)
+
+        self.layout.addWidget(self.debug_group)
+        self.layout.addStretch(1)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("background: transparent; border: none;")
+
+
+class ConsoleLogInterface(ScrollArea):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setObjectName("consoleLogInterface")
+        self.view = QWidget()
+        self.layout = QVBoxLayout(self.view)
+        self.layout.setContentsMargins(30, 20, 30, 20)
+        self.layout.setSpacing(12)
+
+        self.layout.addWidget(SubtitleLabel("控制台日志", self.view))
+        self.log_edit = TextEdit(self.view)
+        self.log_edit.setReadOnly(True)
+        self.log_edit.setPlaceholderText("运行日志会实时显示在这里")
+        self.log_edit.setMinimumHeight(520)
+        self.layout.addWidget(self.log_edit)
+
+        self.clear_btn = PushButton(FIF.DELETE, "清空日志", self.view)
+        self.clear_btn.clicked.connect(self.log_edit.clear)
+        self.layout.addWidget(self.clear_btn, 0, Qt.AlignRight)
+
+        self.setWidget(self.view)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setStyleSheet("background: transparent; border: none;")
+
+    def append_log(self, text: str):
+        if not text:
+            return
+        cursor = self.log_edit.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        cursor.insertText(text)
+        self.log_edit.setTextCursor(cursor)
+        self.log_edit.ensureCursorVisible()
 
 
 class AboutInterface(ScrollArea):
@@ -1693,12 +1862,22 @@ class MainWindow(FluentWindow):
         self.setting_page = SettingInterface(self)
         self.ai_page      = AISettingInterface(self)
         self.overlay_page = OverlaySettingInterface(self)
+        self.debug_page   = DebugSettingInterface(self)
+        self.console_page = ConsoleLogInterface(self)
         self.about_page   = AboutInterface(self)
+
+        self._dev_unlock_seq = ""
+        self._dev_tabs_unlocked = bool(self.cfg.get("dev_tabs_unlocked", False))
+        if not self._dev_tabs_unlocked:
+            # 未注册到导航前先隐藏，避免作为普通子控件出现在左上角
+            self.debug_page.hide()
+            self.console_page.hide()
 
         self.addSubInterface(self.home_page,    FIF.HOME,    "主页")
         self.addSubInterface(self.setting_page, FIF.SETTING, "配置")
         self.addSubInterface(self.ai_page,      FIF.ROBOT,   "AI 配置")
         self.addSubInterface(self.overlay_page, FIF.BRUSH,   "贴字设置")
+        self._register_dev_tabs_if_needed()
         self.addSubInterface(
             self.about_page,
             FIF.INFO,
@@ -1736,8 +1915,24 @@ class MainWindow(FluentWindow):
         self.reset_nav_btn.clicked.connect(self.reset_all_settings)
 
         # 给右侧各页面预留底部固定栏空间，滚动内容在其上方结束
-        for page in (self.home_page, self.setting_page, self.ai_page, self.overlay_page, self.about_page):
+        self._pages_with_bottom_bar = [
+            self.home_page,
+            self.setting_page,
+            self.ai_page,
+            self.overlay_page,
+            self.about_page,
+        ]
+        if self._dev_tabs_unlocked:
+            self._pages_with_bottom_bar.extend([self.debug_page, self.console_page])
+        for page in self._pages_with_bottom_bar:
             page.setViewportMargins(0, 0, 0, 52)
+
+        self._console_signal = ConsoleSignal()
+        self._console_signal.message.connect(self.console_page.append_log)
+        self._origin_stdout = sys.stdout
+        self._origin_stderr = sys.stderr
+        sys.stdout = StreamForwarder(self._console_signal, self._origin_stdout)
+        sys.stderr = StreamForwarder(self._console_signal, self._origin_stderr)
 
         self.load_settings()
         self._sync_region_ui()
@@ -1760,6 +1955,72 @@ class MainWindow(FluentWindow):
         self._layout_top_action_bar()
         self._refresh_start_button_style()
         self._on_page_changed(self.stackedWidget.currentIndex())
+
+    def _register_dev_tabs_if_needed(self):
+        if not self._dev_tabs_unlocked:
+            return
+        self.debug_page.show()
+        self.console_page.show()
+        self.addSubInterface(
+            self.debug_page,
+            FIF.DEVELOPER_TOOLS,
+            "调试设置",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.addSubInterface(
+            self.console_page,
+            FIF.DOCUMENT,
+            "控制台日志",
+            NavigationItemPosition.BOTTOM,
+        )
+
+    def _unlock_dev_tabs(self):
+        if self._dev_tabs_unlocked:
+            return
+        self._dev_tabs_unlocked = True
+        self.cfg["dev_tabs_unlocked"] = True
+        save_config(self.cfg)
+        self.debug_page.show()
+        self.console_page.show()
+        if hasattr(self, "removeSubInterface"):
+            try:
+                self.removeSubInterface(self.about_page)
+            except Exception:
+                pass
+        self.addSubInterface(
+            self.debug_page,
+            FIF.DEVELOPER_TOOLS,
+            "调试设置",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.addSubInterface(
+            self.console_page,
+            FIF.DOCUMENT,
+            "控制台日志",
+            NavigationItemPosition.BOTTOM,
+        )
+        # 重新注册关于页，确保其始终位于底部最后一项
+        self.addSubInterface(
+            self.about_page,
+            FIF.INFO,
+            "关于",
+            NavigationItemPosition.BOTTOM,
+        )
+        self.debug_page.setViewportMargins(0, 0, 0, 52)
+        self.console_page.setViewportMargins(0, 0, 0, 52)
+        self.stackedWidget.setCurrentWidget(self.debug_page)
+        InfoBar.success("开发者模式", "已解锁调试设置与控制台日志标签页", parent=self)
+
+    def keyPressEvent(self, event):
+        if self.stackedWidget.currentWidget() == self.about_page:
+            text = (event.text() or "").lower()
+            if text.isalpha():
+                self._dev_unlock_seq = (self._dev_unlock_seq + text)[-3:]
+                if self._dev_unlock_seq == "ice":
+                    self._unlock_dev_tabs()
+            else:
+                self._dev_unlock_seq = ""
+        super().keyPressEvent(event)
 
     def _layout_top_action_bar(self):
         if not hasattr(self, 'top_action_bar'):
@@ -1789,7 +2050,7 @@ class MainWindow(FluentWindow):
 
     def _on_page_changed(self, index: int):
         page = self.stackedWidget.widget(index)
-        show_save = page in (self.setting_page, self.ai_page, self.overlay_page)
+        show_save = page in (self.setting_page, self.ai_page, self.overlay_page, self.debug_page)
         self.save_nav_btn.setVisible(show_save)
         self.reset_nav_btn.setVisible(show_save)
 
@@ -1805,6 +2066,7 @@ class MainWindow(FluentWindow):
             return
         from config_manager import DEFAULT_CONFIG
         self.cfg = DEFAULT_CONFIG.copy()
+        self.cfg["dev_tabs_unlocked"] = self._dev_tabs_unlocked
         save_config(self.cfg)
         self.load_settings()
         if self.overlay:
@@ -1845,6 +2107,9 @@ class MainWindow(FluentWindow):
         self.ai_page.ocr_key_edit.setText(self.cfg.get("ocr_key", ""))
         self.ai_page.ocr_ctx_spin.setValue(self.cfg.get("ocr_context_length", 8192))
         self.ai_page.ocr_prompt_edit.setText(self.cfg.get("ocr_prompt", ""))
+        self.ai_page.overlay_ocr_prompt_edit.setText(
+            self.cfg.get("overlay_ocr_prompt", "\n<|grounding|>OCR the image.")
+        )
         self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
         self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
         self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
@@ -1860,11 +2125,9 @@ class MainWindow(FluentWindow):
         self.overlay_page.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
         self.overlay_page.trans_color_btn.setColor(self.cfg.get("trans_color", "#FFFFFF"))
+        self.overlay_page.max_height_spin.setValue(self.cfg.get("ui_max_height", 0))
         self.overlay_page.overlay_min_h_spin.setValue(self.cfg.get("overlay_min_box_height", 28))
         self.overlay_page.sw_overlay_ocr.setChecked(self.cfg.get("use_overlay_ocr", False))
-        self.overlay_page.overlay_prompt_edit.setText(
-            self.cfg.get("overlay_ocr_prompt", "\n<|grounding|>OCR the image.")
-        )
         self.overlay_page.sw_overlay_boxes.setChecked(
             self.cfg.get("show_overlay_debug_boxes", False)
         )
@@ -1885,6 +2148,15 @@ class MainWindow(FluentWindow):
         )
         self.overlay_page.line_end_chars_edit.setText(
             self.cfg.get("line_end_chars", ".!?。！？…")
+        )
+        self.debug_page.sw_dump_image.setChecked(
+            self.cfg.get("save_debug_images", False)
+        )
+        self.debug_page.sw_log_ocr_raw.setChecked(
+            self.cfg.get("log_ocr_raw", False)
+        )
+        self.debug_page.sw_log_ocr_text.setChecked(
+            self.cfg.get("log_ocr_text", False)
         )
 
     def _sync_region_ui(self):
@@ -1917,12 +2189,14 @@ class MainWindow(FluentWindow):
             "show_ocr_text":       self.overlay_page.sw_show_ocr.isChecked(),
             "ocr_color":           self.overlay_page.ocr_color_btn.color(),
             "trans_color":         self.overlay_page.trans_color_btn.color(),
+            "ui_max_height":       int(self.overlay_page.max_height_spin.value()),
             "overlay_min_box_height": int(self.overlay_page.overlay_min_h_spin.value()),
             "ocr_model":           self.ai_page.ocr_model_edit.text(),
             "ocr_api":             self.ai_page.ocr_api_edit.text(),
             "ocr_key":             self.ai_page.ocr_key_edit.text(),
             "ocr_context_length":  int(self.ai_page.ocr_ctx_spin.value()),
             "ocr_prompt":          self.ai_page.ocr_prompt_edit.toPlainText(),
+            "overlay_ocr_prompt":  self.ai_page.overlay_ocr_prompt_edit.toPlainText(),
             "llm_model":           self.ai_page.llm_model_edit.text(),
             "llm_api":             self.ai_page.llm_api_edit.text(),
             "llm_key":             self.ai_page.llm_key_edit.text(),
@@ -1936,7 +2210,9 @@ class MainWindow(FluentWindow):
             "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
-            "overlay_ocr_prompt": self.overlay_page.overlay_prompt_edit.toPlainText(),
+            "save_debug_images": self.debug_page.sw_dump_image.isChecked(),
+            "log_ocr_raw": self.debug_page.sw_log_ocr_raw.isChecked(),
+            "log_ocr_text": self.debug_page.sw_log_ocr_text.isChecked(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
             "overlay_max_line_gap": int(self.overlay_page.max_line_gap_spin.value()),
             "overlay_joiner": self.overlay_page.joiner_edit.text(),
