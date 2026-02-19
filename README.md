@@ -46,5 +46,4 @@ python main.py
 
 ## 仓库与作者
 
-- 仓库：请在应用「关于」页面中配置为你的真实仓库地址
-- 作者：Tsukimi Translator Contributors
+- 作者：IceRinne aka. hanbinhsh
