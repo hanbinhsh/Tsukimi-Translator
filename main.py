@@ -189,7 +189,13 @@ class TranslationThread(QThread):
         return True
 
     @staticmethod
-    def _merge_overlay_lines(items: list, min_height: int, joiner: str) -> list:
+    def _merge_overlay_lines(
+        items: list,
+        min_height: int,
+        joiner: str,
+        line_start_chars: str,
+        line_end_chars: str,
+    ) -> list:
         """将连续的小高度行拼接为一句，减少被错误断行的影响。"""
         if not items:
             return items
@@ -219,8 +225,13 @@ class TranslationThread(QThread):
             continuation = TranslationThread._looks_like_sentence_continuation(
                 current.get("text", ""),
                 item.get("text", ""),
+<<<<<<< codex/add-options-for-text-processing-5zrdde
+                line_start_chars,
+                line_end_chars,
+=======
                 self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
                 self.config.get("line_end_chars", ".!?。！？…"),
+>>>>>>> main
             )
 
             should_merge = near_line and (
@@ -260,7 +271,9 @@ class TranslationThread(QThread):
                         items = self._merge_overlay_lines(
                             items,
                             int(self.config.get("overlay_min_line_height", 40)),
-                            self.config.get("overlay_joiner", " ")
+                            self.config.get("overlay_joiner", " "),
+                            self.config.get("line_start_chars", ",.;:!?)]}、，。！？；：」』）】》"),
+                            self.config.get("line_end_chars", ".!?。！？…"),
                         )
                     # 发出原文供 OCR 标签显示（合并所有文本）
                     self.ocr_ready.emit("\n".join(it["text"] for it in items))
