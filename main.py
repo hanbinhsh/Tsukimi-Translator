@@ -161,6 +161,28 @@ class TranslationThread(QThread):
         self.config = config
 
     @staticmethod
+    def _looks_like_sentence_continuation(prev_text: str, next_text: str) -> bool:
+        """判断下一行是否更像是上一行的续句（如英文断行）。"""
+        prev = (prev_text or "").strip()
+        nxt = (next_text or "").strip()
+        if not prev or not nxt:
+            return False
+
+        # 上一行以连字符结束通常表示被截断（hy-
+        # phen）
+        if prev.endswith("-"):
+            return True
+
+        # 下一行若以小写/标点开头，通常是续句而不是新句
+        head = nxt[0]
+        if head.islower() or head in ",.;:!?)]}、，。！？；：」』）】》":
+            return True
+
+        # 上一行没有常见终止符时，更可能和下一行相连
+        terminal_marks = (".", "!", "?", "。", "！", "？", "…")
+        return not prev.endswith(terminal_marks)
+
+    @staticmethod
     def _merge_overlay_lines(items: list, min_height: int, joiner: str) -> list:
         """将连续的小高度行拼接为一句，减少被错误断行的影响。"""
         if not items:
@@ -183,9 +205,20 @@ class TranslationThread(QThread):
             cx1, cy1, cx2, cy2 = current["bbox"]
             vertical_gap = max(0, y1 - cy2)
 
-            should_merge = (
-                prev_small and is_small and
-                vertical_gap <= max(2, int(min_height * 0.6))
+            horizontal_overlap = max(0, min(cx2, x2) - max(cx1, x1))
+            min_width = max(1, min(cx2 - cx1, x2 - x1))
+            overlap_ratio = horizontal_overlap / min_width
+
+            near_line = vertical_gap <= max(4, int(min_height * 0.8)) and overlap_ratio >= 0.2
+            continuation = TranslationThread._looks_like_sentence_continuation(
+                current.get("text", ""), item.get("text", "")
+            )
+
+            should_merge = near_line and (
+                (prev_small and is_small) or
+                (prev_small and continuation) or
+                (is_small and continuation) or
+                (continuation and vertical_gap <= max(2, int(min_height * 0.5)))
             )
 
             if should_merge:
@@ -897,6 +930,7 @@ class SubtitleOverlay(QWidget):
 
     def on_ocr_ready(self, text: str):
         """OCR 阶段完成，展示原文（若设置开启）"""
+        print(f"[OCR 输出全文]\n{text}\n[OCR 输出结束]")
         if self.cfg.get("show_ocr_text", False) and text.strip():
             self.ocr_label.setText(text)
             self.ocr_label.setVisible(True)
@@ -906,10 +940,15 @@ class SubtitleOverlay(QWidget):
         """贴字翻译：将带坐标的译文更新到屏幕浮层"""
         if self.text_overlay and isValid(self.text_overlay):
             self.text_overlay.update_items(items, self._latest_ocr_image_size)
-        # 字幕条显示"贴字翻译已更新"简短提示
-        summary = " | ".join(it.get("translated", it["text"])[:20] for it in items[:3])
-        if summary:
-            self.trans_label.setText(f"[贴字] {summary}")
+        overlay_lines = []
+        for idx, it in enumerate(items, start=1):
+            src = it.get("text", "")
+            dst = it.get("translated", src)
+            overlay_lines.append(f"[{idx}] OCR: {src}\n[{idx}] LLM: {dst}")
+        if overlay_lines:
+            debug_text = "\n\n".join(overlay_lines)
+            print(f"[贴字模型输出全文]\n{debug_text}\n[贴字模型输出结束]")
+            self.trans_label.setText(debug_text)
             self._adjust_size()
 
     def on_partial_text(self, text: str):
@@ -922,7 +961,7 @@ class SubtitleOverlay(QWidget):
         total = self.step1_duration + ai_duration
         print(f"\n{'='*40}\n时戳: {time.strftime('%H:%M:%S')}")
         print(f"截图: {self.step1_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s")
-        print(f"输出: {text[:60]}...\n{'='*40}")
+        print(f"模型输出全文:\n{text}\n{'='*40}")
 
         if text.strip():
             self.trans_label.setText(text)
