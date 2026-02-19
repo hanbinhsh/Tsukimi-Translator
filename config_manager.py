@@ -12,6 +12,13 @@ DEFAULT_CONFIG = {
     "llm_api": "http://localhost:11434/api/generate",
     "llm_key": "",
     "ocr_prompt": "Extract all text from this image. Output only the text content, no explanations.",
+    "overlay_ocr_prompt": "<|grounding|>OCR the image.",
+    "ocr_temperature": 0,
+    "ocr_seed": 0,
+    "ocr_num_predict": 4096,
+    "ocr_use_chat_api": True,      # OCR 请求使用 /api/chat（更接近 ollama run）
+    "ocr_image_format": "PNG",   # OCR 上传图片编码：PNG(无损) / JPEG
+    "ocr_image_quality": 95,       # JPEG 编码质量（仅 JPEG 生效）
     "use_ocr": True,
     "use_llm": True,
     "use_stream": False,            # 是否流式输出

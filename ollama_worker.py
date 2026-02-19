@@ -21,26 +21,71 @@ class OllamaTranslator:
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
+    def _ocr_options(self) -> dict:
+        """统一 OCR 采样参数，尽量提高多次识别的一致性。"""
+        return {
+            "temperature": float(self.cfg.get("ocr_temperature", 0)),
+            "seed": int(self.cfg.get("ocr_seed", 0)),
+            "num_predict": int(self.cfg.get("ocr_num_predict", 4096)),
+        }
+
+    def _ocr_chat_endpoint(self) -> str:
+        """将 OCR 接口地址转换为 /api/chat，用于对齐 ollama run。"""
+        api = self._api_for("ocr")
+        if api.endswith("/api/generate"):
+            return f"{api[:-len('/api/generate')]}/api/chat"
+        return api
+
+    def _call_ocr(self, prompt: str, image_bytes: bytes, timeout_s: int) -> str:
+        """优先按 /api/chat 调用 OCR，失败时回退 generate。"""
+        b64 = base64.b64encode(image_bytes).decode()
+        options = self._ocr_options()
+        headers = self._headers_for("ocr")
+
+        use_chat = bool(self.cfg.get("ocr_use_chat_api", True))
+        if use_chat:
+            chat_payload = {
+                "model": self.cfg["ocr_model"],
+                "messages": [{"role": "user", "content": prompt, "images": [b64]}],
+                "stream": False,
+                "options": options,
+            }
+            try:
+                res = requests.post(
+                    self._ocr_chat_endpoint(), json=chat_payload, headers=headers, timeout=timeout_s
+                )
+                if res.ok:
+                    data = res.json()
+                    msg = data.get("message") or {}
+                    content = (msg.get("content") or "").strip()
+                    if content:
+                        return content
+            except Exception as e:
+                print(f"[ocr chat fallback] {e}")
+
+        payload = {
+            "model": self.cfg["ocr_model"],
+            "prompt": prompt,
+            "images": [b64],
+            "stream": False,
+            "options": options,
+        }
+        res = requests.post(
+            self._api_for("ocr"), json=payload, headers=headers, timeout=timeout_s
+        ).json()
+        return (res.get("response") or "").strip()
+
     # ──────────────────────────────────────────
     # 独立方法（供 TranslationThread 分步调用）
     # ──────────────────────────────────────────
 
     def run_ocr(self, image_bytes: bytes) -> str:
         """调用视觉模型提取图片中的文字，返回纯文本"""
-        b64 = base64.b64encode(image_bytes).decode()
-        payload = {
-            "model": self.cfg["ocr_model"],
-            "prompt": self.cfg.get(
-                "ocr_prompt",
-                "Extract all text from this image. Output only the text content, no explanations."
-            ),
-            "images": [b64],
-            "stream": False,
-        }
-        res = requests.post(
-            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
-        ).json()
-        return res.get("response", "").strip()
+        prompt = self.cfg.get(
+            "ocr_prompt",
+            "Extract all text from this image. Output only the text content, no explanations."
+        )
+        return self._call_ocr(prompt, image_bytes, timeout_s=20)
 
     def run_llm(self, text: str, image_bytes: bytes = None) -> str:
         """调用 LLM 进行翻译/润色（非流式），返回结果字符串"""
@@ -118,17 +163,8 @@ class OllamaTranslator:
         坐标为 0-1000 归一化坐标，相对于图片尺寸。
         若模型不支持该格式，返回空列表（调用方应降级到普通 OCR）。
         """
-        b64 = base64.b64encode(image_bytes).decode()
-        payload = {
-            "model": self.cfg["ocr_model"],
-            "prompt": "<|grounding|>OCR the image.",
-            "images": [b64],
-            "stream": False,
-        }
-        res = requests.post(
-            self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
-        ).json()
-        raw = res.get("response", "").strip()
+        prompt = self.cfg.get("overlay_ocr_prompt", "<|grounding|>OCR the image.")
+        raw = self._call_ocr(prompt, image_bytes, timeout_s=30)
         print(f"[overlay_ocr 原始模型输出全文]\n{raw}\n[overlay_ocr 原始模型输出结束]")
         items = self._parse_grounding_ocr(raw)
         if not items:
