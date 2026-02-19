@@ -2315,7 +2315,9 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn = PrimaryPushButton("新增规则组", self.top_bar)
         self.copy_group_btn = PushButton("复制规则组", self.top_bar)
         self.del_group_btn = PushButton("删除规则组", self.top_bar)
-        for b in (self.del_group_btn, self.copy_group_btn, self.add_group_btn):
+        self.reset_btn = PushButton("重置设置", self.top_bar)
+        self.save_btn = PrimaryPushButton("保存设置", self.top_bar)
+        for b in (self.reset_btn, self.del_group_btn, self.copy_group_btn, self.add_group_btn, self.save_btn):
             b.setFixedWidth(110)
             top_layout.addWidget(b)
 
@@ -2368,6 +2370,8 @@ class RuleSettingInterface(ScrollArea):
         self.add_group_btn.clicked.connect(self.add_group)
         self.copy_group_btn.clicked.connect(self.copy_group)
         self.del_group_btn.clicked.connect(self.delete_group)
+        self.reset_btn.clicked.connect(self.reset_settings)
+        self.save_btn.clicked.connect(self.save_settings)
 
         self._reload_group_table()
 
@@ -2471,6 +2475,18 @@ class RuleSettingInterface(ScrollArea):
                 "name": name_edit,
                 "enabled": enabled_cb,
             })
+
+    def reset_settings(self):
+        latest = load_config()
+        self.cfg["ocr_rule_groups"] = normalize_rule_groups(latest.get("ocr_rule_groups", []))
+        self.cfg["output_rule_groups"] = normalize_rule_groups(latest.get("output_rule_groups", []))
+        self._reload_group_table()
+        InfoBar.success("规则设置", "已重置为已保存配置", parent=self.window() or self)
+
+    def save_settings(self):
+        self.sync_to_config()
+        save_config(self.cfg)
+        InfoBar.success("规则设置", "规则配置已保存", parent=self.window() or self)
 
 
     def add_group(self):
