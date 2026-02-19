@@ -21,6 +21,14 @@ class OllamaTranslator:
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
+    def _ocr_options(self) -> dict:
+        """统一 OCR 采样参数，尽量提高多次识别的一致性。"""
+        return {
+            "temperature": float(self.cfg.get("ocr_temperature", 0)),
+            "seed": int(self.cfg.get("ocr_seed", 0)),
+            "num_predict": int(self.cfg.get("ocr_num_predict", 4096)),
+        }
+
     # ──────────────────────────────────────────
     # 独立方法（供 TranslationThread 分步调用）
     # ──────────────────────────────────────────
@@ -36,6 +44,7 @@ class OllamaTranslator:
             ),
             "images": [b64],
             "stream": False,
+            "options": self._ocr_options(),
         }
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=20
@@ -121,9 +130,10 @@ class OllamaTranslator:
         b64 = base64.b64encode(image_bytes).decode()
         payload = {
             "model": self.cfg["ocr_model"],
-            "prompt": "<|grounding|>OCR the image.",
+            "prompt": self.cfg.get("overlay_ocr_prompt", "<|grounding|>OCR the image."),
             "images": [b64],
             "stream": False,
+            "options": self._ocr_options(),
         }
         res = requests.post(
             self._api_for("ocr"), json=payload, headers=self._headers_for("ocr"), timeout=30
