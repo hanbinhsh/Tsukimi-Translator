@@ -857,11 +857,7 @@ class SubtitleOverlay(QWidget):
             }
             QScrollBar:vertical {
                 background: transparent;
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
-                width: 8px;
-=======
                 width: 4px;
->>>>>>> main
                 margin: 2px 1px 2px 0;
             }
             QScrollBar::handle:vertical {
@@ -2018,11 +2014,7 @@ class RuleGroupEditorDialog(QDialog):
     def __init__(self, group_data: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
-        self.resize(1120, 620)
-=======
         self.resize(980, 520)
->>>>>>> main
         self.group_data = copy.deepcopy(group_data)
         self.rules = self.group_data.get("rules", [])
         self._copied_rule = None
@@ -2042,10 +2034,50 @@ class RuleGroupEditorDialog(QDialog):
             head.addWidget(btn)
         layout.addLayout(head)
 
-        self.table = QTableWidget(self)
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels([
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+        self.row_items = []
+
+        table_wrap = QFrame(self)
+        table_layout = QVBoxLayout(table_wrap)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(6)
+
+        header = QWidget(table_wrap)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(8, 6, 8, 6)
+        header_layout.setSpacing(8)
+        header_specs = [
+            ("", 28),
+            ("规则名称", 170),
+            ("替换文本", 220),
+            ("替换为", 220),
+            ("启用", 60),
+            ("正则", 60),
+            ("区分大小写", 90),
+            ("全字匹配", 80),
+            ("上下移动", 90),
+            ("删除", 60),
+        ]
+        for text, width in header_specs:
+            label = QLabel(text, header)
+            label.setAlignment(Qt.AlignCenter)
+            label.setFixedWidth(width)
+            header_layout.addWidget(label)
+        header_layout.addStretch(1)
+        table_layout.addWidget(header)
+
+        self.rows_container = QWidget(table_wrap)
+        self.rows_layout = QVBoxLayout(self.rows_container)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setSpacing(6)
+        self.rows_layout.addStretch(1)
+
+        self.rows_scroll = QScrollArea(table_wrap)
+        self.rows_scroll.setWidgetResizable(True)
+        self.rows_scroll.setFrameShape(QFrame.NoFrame)
+        self.rows_scroll.setWidget(self.rows_container)
+        table_layout.addWidget(self.rows_scroll)
+
+        layout.addWidget(table_wrap)
             "规则名称", "启用", "正则", "区分大小写", "全字匹配", "上下移动", "删除"
         ])
         self.table.verticalHeader().setVisible(False)
@@ -2057,17 +2089,6 @@ class RuleGroupEditorDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
         for c in (1, 2, 3, 4, 5, 6):
-=======
-            "", "规则名称", "正则", "区分大小写", "全字匹配", "上下移动", "删除"
-        ])
-        self.table.verticalHeader().setVisible(False)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        for c in (2, 3, 4, 5, 6):
->>>>>>> main
             header.setSectionResizeMode(c, QHeaderView.ResizeToContents)
         layout.addWidget(self.table)
 
@@ -2089,23 +2110,77 @@ class RuleGroupEditorDialog(QDialog):
         self._reload_table()
 
     def _selected_rows(self) -> list[int]:
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+        rows = []
+        for i, row in enumerate(self.row_items):
+            if row["selected"].isChecked():
+                rows.append(i)
+        return rows
+
+    def _reload_table(self):
+        while self.rows_layout.count() > 1:
+            item = self.rows_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        self.row_items = []
+        for r, rule in enumerate(self.rules):
+            row_widget = QFrame(self.rows_container)
+            row_widget.setObjectName("ruleRow")
+            row_widget.setStyleSheet("#ruleRow { border: 1px solid rgba(120,120,120,0.25); border-radius: 6px; }")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(8, 6, 8, 6)
+            row_layout.setSpacing(8)
+
+            selected_cb = QCheckBox(row_widget)
+            selected_cb.setFixedWidth(28)
+            row_layout.addWidget(selected_cb)
+
+            name_edit = LineEdit(row_widget)
+            name_edit.setFixedWidth(170)
+            name_edit.setText(rule.get("name", f"规则{r + 1}"))
+            row_layout.addWidget(name_edit)
+
+            pattern_edit = LineEdit(row_widget)
+            pattern_edit.setPlaceholderText("要匹配的文本")
+            pattern_edit.setFixedWidth(220)
+            pattern_edit.setText(rule.get("pattern", ""))
+            row_layout.addWidget(pattern_edit)
+
+            replacement_edit = LineEdit(row_widget)
+            replacement_edit.setPlaceholderText("替换后的文本")
+            replacement_edit.setFixedWidth(220)
+            replacement_edit.setText(rule.get("replacement", ""))
+            row_layout.addWidget(replacement_edit)
+
+            enabled_sw = SwitchButton(row_widget)
+            enabled_sw.setFixedWidth(60)
+            enabled_sw.setChecked(bool(rule.get("enabled", True)))
+            row_layout.addWidget(enabled_sw)
+
+            regex_sw = SwitchButton(row_widget)
+            regex_sw.setFixedWidth(60)
+            regex_sw.setChecked(bool(rule.get("regex", False)))
+            row_layout.addWidget(regex_sw)
+
+            case_sw = SwitchButton(row_widget)
+            case_sw.setFixedWidth(90)
+            case_sw.setChecked(bool(rule.get("case_sensitive", False)))
+            row_layout.addWidget(case_sw)
+
+            whole_sw = SwitchButton(row_widget)
+            whole_sw.setFixedWidth(80)
+            whole_sw.setChecked(bool(rule.get("whole_word", False)))
+            row_layout.addWidget(whole_sw)
+
+            up_down = QWidget(row_widget)
         if not self.table.selectionModel():
             return []
         return sorted({idx.row() for idx in self.table.selectionModel().selectedRows()})
-=======
-        rows = []
-        for r in range(self.table.rowCount()):
-            cb = self.table.cellWidget(r, 0)
-            if isinstance(cb, QCheckBox) and cb.isChecked():
-                rows.append(r)
-        return rows
->>>>>>> main
 
     def _reload_table(self):
         self.table.setRowCount(len(self.rules))
         for r, rule in enumerate(self.rules):
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
             name_item = QTableWidgetItem(rule.get("name", f"规则{r + 1}"))
             self.table.setItem(r, 0, name_item)
 
@@ -2117,18 +2192,6 @@ class RuleGroupEditorDialog(QDialog):
                 cb = QCheckBox()
                 cb.setChecked(bool(rule.get(key, False)))
                 self.table.setCellWidget(r, col, cb)
-=======
-            sel = QCheckBox()
-            self.table.setCellWidget(r, 0, sel)
-
-            name_item = QTableWidgetItem(rule.get("name", f"规则{r + 1}"))
-            self.table.setItem(r, 1, name_item)
-
-            for col, key in ((2, "regex"), (3, "case_sensitive"), (4, "whole_word")):
-                sw = SwitchButton(self.table)
-                sw.setChecked(bool(rule.get(key, False)))
-                self.table.setCellWidget(r, col, sw)
->>>>>>> main
 
             up_down = QWidget(self.table)
             up_down_layout = QHBoxLayout(up_down)
@@ -2141,16 +2204,37 @@ class RuleGroupEditorDialog(QDialog):
             down_btn.clicked.connect(lambda _, i=r: self.move_rule(i, 1))
             up_down_layout.addWidget(up_btn)
             up_down_layout.addWidget(down_btn)
-            self.table.setCellWidget(r, 5, up_down)
+            up_down.setFixedWidth(90)
+            row_layout.addWidget(up_down)
 
-            del_btn = PushButton("删除")
+            del_btn = PushButton("删除", row_widget)
+            del_btn.setFixedWidth(60)
             del_btn.clicked.connect(lambda _, i=r: self.delete_rule(i))
-            self.table.setCellWidget(r, 6, del_btn)
+            row_layout.addWidget(del_btn)
+            row_layout.addStretch(1)
+
+            self.rows_layout.insertWidget(self.rows_layout.count() - 1, row_widget)
+            self.row_items.append({
+                "selected": selected_cb,
+                "name": name_edit,
+                "pattern": pattern_edit,
+                "replacement": replacement_edit,
+                "enabled": enabled_sw,
+                "regex": regex_sw,
+                "case_sensitive": case_sw,
+                "whole_word": whole_sw,
+            })
 
 
     def _sync_back(self):
-        for r in range(self.table.rowCount()):
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+        for r, row in enumerate(self.row_items):
+            self.rules[r]["name"] = row["name"].text().strip() or f"规则{r + 1}"
+            self.rules[r]["pattern"] = row["pattern"].text()
+            self.rules[r]["replacement"] = row["replacement"].text()
+            self.rules[r]["enabled"] = bool(row["enabled"].isChecked())
+            self.rules[r]["regex"] = bool(row["regex"].isChecked())
+            self.rules[r]["case_sensitive"] = bool(row["case_sensitive"].isChecked())
+            self.rules[r]["whole_word"] = bool(row["whole_word"].isChecked())
             self.rules[r]["name"] = self.table.item(r, 0).text() if self.table.item(r, 0) else f"规则{r + 1}"
             enabled_widget = self.table.cellWidget(r, 1)
             regex_widget = self.table.cellWidget(r, 2)
@@ -2160,12 +2244,6 @@ class RuleGroupEditorDialog(QDialog):
             self.rules[r]["regex"] = bool(regex_widget.isChecked()) if isinstance(regex_widget, QCheckBox) else False
             self.rules[r]["case_sensitive"] = bool(case_widget.isChecked()) if isinstance(case_widget, QCheckBox) else False
             self.rules[r]["whole_word"] = bool(whole_widget.isChecked()) if isinstance(whole_widget, QCheckBox) else False
-=======
-            self.rules[r]["name"] = self.table.item(r, 1).text() if self.table.item(r, 1) else f"规则{r + 1}"
-            self.rules[r]["regex"] = bool(self.table.cellWidget(r, 2).isChecked())
-            self.rules[r]["case_sensitive"] = bool(self.table.cellWidget(r, 3).isChecked())
-            self.rules[r]["whole_word"] = bool(self.table.cellWidget(r, 4).isChecked())
->>>>>>> main
 
     def add_rule(self):
         self._sync_back()
@@ -2266,8 +2344,42 @@ class RuleSettingInterface(ScrollArea):
 
         self.layout.addWidget(self.top_bar)
 
-        self.group_table = QTableWidget(self.view)
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+        self.group_rows = []
+
+        self.group_table = QFrame(self.view)
+        self.group_table.setObjectName("ruleGroupTable")
+        self.group_table.setStyleSheet("#ruleGroupTable { border: 1px solid rgba(120,120,120,0.25); border-radius: 8px; }")
+        group_table_layout = QVBoxLayout(self.group_table)
+        group_table_layout.setContentsMargins(8, 8, 8, 8)
+        group_table_layout.setSpacing(6)
+
+        group_header = QWidget(self.group_table)
+        group_header_layout = QHBoxLayout(group_header)
+        group_header_layout.setContentsMargins(8, 6, 8, 6)
+        group_header_layout.setSpacing(8)
+        group_header_specs = [
+            ("", 28),
+            ("规则组名称", 280),
+            ("已启用/总数", 90),
+            ("上下移动", 90),
+            ("编辑规则组", 110),
+            ("启用", 60),
+        ]
+        for text, width in group_header_specs:
+            label = QLabel(text, group_header)
+            label.setAlignment(Qt.AlignCenter)
+            label.setFixedWidth(width)
+            group_header_layout.addWidget(label)
+        group_header_layout.addStretch(1)
+        group_table_layout.addWidget(group_header)
+
+        self.group_rows_container = QWidget(self.group_table)
+        self.group_rows_layout = QVBoxLayout(self.group_rows_container)
+        self.group_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.group_rows_layout.setSpacing(6)
+        self.group_rows_layout.addStretch(1)
+        group_table_layout.addWidget(self.group_rows_container)
+
         self.group_table.setColumnCount(5)
         self.group_table.setHorizontalHeaderLabels(["规则组名称", "已启用/总数", "上下移动", "编辑规则组", "启用"])
         self.group_table.verticalHeader().setVisible(False)
@@ -2281,19 +2393,7 @@ class RuleSettingInterface(ScrollArea):
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-=======
-        self.group_table.setColumnCount(6)
-        self.group_table.setHorizontalHeaderLabels(["", "规则组名称", "规则条数", "上下移动", "编辑规则组", "启用"])
-        self.group_table.verticalHeader().setVisible(False)
-        self.group_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        header = self.group_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
->>>>>>> main
+
         self.layout.addWidget(self.group_table)
 
         self.layout.addStretch(1)
@@ -2317,54 +2417,74 @@ class RuleSettingInterface(ScrollArea):
         self._reload_group_table()
 
     def _selected_rows(self) -> list[int]:
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+        rows = []
+        for i, row in enumerate(self.group_rows):
+            if row["selected"].isChecked():
+                rows.append(i)
+        return rows
+
+    def _sync_group_names(self):
+        groups = self._groups()
+        for r, row in enumerate(self.group_rows):
+            if r >= len(groups):
+                break
+            groups[r]["name"] = row["name"].text().strip() or groups[r].get("name", f"规则组{r + 1}")
+            groups[r]["enabled"] = bool(row["enabled"].isChecked())
         if not self.group_table.selectionModel():
             return []
         return sorted({idx.row() for idx in self.group_table.selectionModel().selectedRows()})
-=======
-        rows = []
-        for r in range(self.group_table.rowCount()):
-            cb = self.group_table.cellWidget(r, 0)
-            if isinstance(cb, QCheckBox) and cb.isChecked():
-                rows.append(r)
-        return rows
->>>>>>> main
 
     def _sync_group_names(self):
         groups = self._groups()
         for r in range(self.group_table.rowCount()):
             if r >= len(groups):
                 break
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
             item = self.group_table.item(r, 0)
             groups[r]["name"] = item.text() if item else groups[r].get("name", f"规则组{r + 1}")
             enabled_cb = self.group_table.cellWidget(r, 4)
             if isinstance(enabled_cb, QCheckBox):
                 groups[r]["enabled"] = enabled_cb.isChecked()
-=======
-            item = self.group_table.item(r, 1)
-            groups[r]["name"] = item.text() if item else groups[r].get("name", f"规则组{r + 1}")
-            sw = self.group_table.cellWidget(r, 5)
-            if isinstance(sw, SwitchButton):
-                groups[r]["enabled"] = sw.isChecked()
->>>>>>> main
 
     def _reload_group_table(self):
         groups = normalize_rule_groups(self._groups())
         self.cfg[self.group_key[self.current_mode]] = groups
 
-        self.group_table.setRowCount(len(groups))
+        while self.group_rows_layout.count() > 1:
+            item = self.group_rows_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
+        self.group_rows = []
         for r, group in enumerate(groups):
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+            rules = group.get("rules", [])
+            enabled_count = sum(1 for rule in rules if bool(rule.get("enabled", True)))
+            row_widget = QFrame(self.group_rows_container)
+            row_widget.setObjectName("ruleGroupRow")
+            row_widget.setStyleSheet("#ruleGroupRow { border: 1px solid rgba(120,120,120,0.2); border-radius: 6px; }")
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(8, 6, 8, 6)
+            row_layout.setSpacing(8)
+
+            selected_cb = QCheckBox(row_widget)
+            selected_cb.setFixedWidth(28)
+            row_layout.addWidget(selected_cb)
+
+            name_edit = LineEdit(row_widget)
+            name_edit.setFixedWidth(280)
+            name_edit.setText(group.get("name", f"规则组{r + 1}"))
+            row_layout.addWidget(name_edit)
+
+            count_label = QLabel(f"{enabled_count}/{len(rules)}", row_widget)
+            count_label.setAlignment(Qt.AlignCenter)
+            count_label.setFixedWidth(90)
+            row_layout.addWidget(count_label)
+
+            move_widget = QWidget(row_widget)
             rules = group.get("rules", [])
             enabled_count = sum(1 for rule in rules if bool(rule.get("enabled", True)))
             self.group_table.setItem(r, 0, QTableWidgetItem(group.get("name", f"规则组{r + 1}")))
             self.group_table.setItem(r, 1, QTableWidgetItem(f"{enabled_count}/{len(rules)}"))
-=======
-            self.group_table.setCellWidget(r, 0, QCheckBox())
-            self.group_table.setItem(r, 1, QTableWidgetItem(group.get("name", f"规则组{r + 1}")))
-            self.group_table.setItem(r, 2, QTableWidgetItem(str(len(group.get("rules", [])))))
->>>>>>> main
 
             move_widget = QWidget(self.group_table)
             move_layout = QHBoxLayout(move_widget)
@@ -2377,7 +2497,26 @@ class RuleSettingInterface(ScrollArea):
             down_btn.clicked.connect(lambda _, i=r: self.move_group(i, 1))
             move_layout.addWidget(up_btn)
             move_layout.addWidget(down_btn)
-<<<<<<< codex/fix-textarea-max-height-and-scrollbar-style-gpykj6
+            move_widget.setFixedWidth(90)
+            row_layout.addWidget(move_widget)
+
+            edit_btn = PushButton("编辑规则组", row_widget)
+            edit_btn.setFixedWidth(110)
+            edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
+            row_layout.addWidget(edit_btn)
+
+            enabled_sw = SwitchButton(row_widget)
+            enabled_sw.setFixedWidth(60)
+            enabled_sw.setChecked(group.get("enabled", True))
+            row_layout.addWidget(enabled_sw)
+            row_layout.addStretch(1)
+
+            self.group_rows_layout.insertWidget(self.group_rows_layout.count() - 1, row_widget)
+            self.group_rows.append({
+                "selected": selected_cb,
+                "name": name_edit,
+                "enabled": enabled_sw,
+            })
             self.group_table.setCellWidget(r, 2, move_widget)
 
             edit_btn = PushButton("编辑规则组")
@@ -2387,18 +2526,6 @@ class RuleSettingInterface(ScrollArea):
             enabled_cb = QCheckBox()
             enabled_cb.setChecked(group.get("enabled", True))
             self.group_table.setCellWidget(r, 4, enabled_cb)
-=======
-            self.group_table.setCellWidget(r, 3, move_widget)
-
-            edit_btn = PushButton("编辑规则组")
-            edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
-            self.group_table.setCellWidget(r, 4, edit_btn)
-
-            sw = SwitchButton()
-            sw.setChecked(group.get("enabled", True))
-            self.group_table.setCellWidget(r, 5, sw)
->>>>>>> main
-
 
     def add_group(self):
         self._sync_group_names()
