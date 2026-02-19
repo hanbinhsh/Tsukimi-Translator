@@ -1,12 +1,20 @@
 import sys
 import time
 from pathlib import Path
+<<<<<<< codex/add-ocr-model-settings-nitj9v
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
+=======
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect
+>>>>>>> main
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QColorDialog, QFrame,
                                 QSizePolicy)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
+<<<<<<< codex/add-ocr-model-settings-nitj9v
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices)
+=======
+                           QFont, QPainterPath, QFontMetrics, QIcon)
+>>>>>>> main
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
