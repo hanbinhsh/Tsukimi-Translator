@@ -18,8 +18,8 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
                              SettingCardGroup, ScrollArea, PrimaryPushButton, InfoBar,
                              SwitchButton, DoubleSpinBox, IconWidget, SegmentedWidget,
-                             CheckBox,
-                             MessageBox, NavigationItemPosition, ColorDialog, ToggleToolButton)
+                             ToggleToolButton,
+                             MessageBox, NavigationItemPosition, ColorDialog)
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
@@ -2144,13 +2144,11 @@ class RuleGroupEditorDialog(QDialog):
         wrap_layout.setContentsMargins(0, 0, 0, 0)
         wrap_layout.setSpacing(0)
         wrap_layout.setAlignment(Qt.AlignCenter)
-        cb = CheckBox(wrap)
-        cb.setText("")
+        cb = ToggleToolButton(FIF.ACCEPT, wrap)
         cb.setChecked(checked)
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        
+
         wrap_layout.addWidget(cb)
-        wrap_layout.addStretch(1)
         return wrap, cb
 
     def _reload_table(self):
@@ -2161,6 +2159,14 @@ class RuleGroupEditorDialog(QDialog):
                 w.deleteLater()
 
         self.row_items = []
+        if not self.rules:
+            empty_label = QLabel("无", self.rows_container)
+            empty_label.setAlignment(Qt.AlignCenter)
+            empty_label.setStyleSheet("color: rgba(128,128,128,0.9);")
+            empty_label.setFixedHeight(44)
+            self.rows_layout.insertWidget(self.rows_layout.count() - 1, empty_label)
+            return
+
         for r, rule in enumerate(self.rules):
             row_widget = QFrame(self.rows_container)
             row_widget.setObjectName("ruleRow")
@@ -2272,8 +2278,6 @@ class RuleGroupEditorDialog(QDialog):
         self._sync_back()
         if 0 <= index < len(self.rules):
             self.rules.pop(index)
-        if not self.rules:
-            self.rules = [copy.deepcopy(make_empty_rule_group()["rules"][0])]
         self._reload_table()
 
     def delete_selected_rules(self):
@@ -2282,8 +2286,6 @@ class RuleGroupEditorDialog(QDialog):
         if not rows:
             return
         self.rules = [r for i, r in enumerate(self.rules) if i not in rows]
-        if not self.rules:
-            self.rules = [copy.deepcopy(make_empty_rule_group()["rules"][0])]
         self._reload_table()
 
     def copy_selected_rule(self):
@@ -2413,13 +2415,11 @@ class RuleSettingInterface(ScrollArea):
         wrap_layout.setContentsMargins(0, 0, 0, 0)
         wrap_layout.setSpacing(0)
         wrap_layout.setAlignment(Qt.AlignCenter)
-        cb = CheckBox(wrap)
-        cb.setText("")
+        cb = ToggleToolButton(FIF.ACCEPT, wrap)
         cb.setChecked(checked)
         cb.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        
+
         wrap_layout.addWidget(cb)
-        wrap_layout.addStretch(1)
         return wrap, cb
 
     def _selected_rows(self) -> list[int]:
