@@ -1314,6 +1314,7 @@ class OverlaySettingInterface(ScrollArea):
             self.sw_auto_merge_card,
             self.min_line_h_card,
             self.joiner_card,
+            self.overlay_min_h_card,
         ):
             self.overlay_group.addSettingCard(card)
 
