@@ -30,8 +30,13 @@ DEFAULT_CONFIG = {
     "capture_screen_name": "",      # 框选时使用的屏幕 QScreen.name()
     "capture_source": "window",        # "window" 窗口截图 / "region" 区域框选
     "capture_mode": "interval",
-    "capture_interval": 2.5,
+    "capture_delay_seconds": 1.5,
     "trigger_key": "Left Click",
+    "custom_trigger_key": "",
+    "trigger_delay_mode": "fixed",
+    "enable_smart_delay": False,
+    "stability_algorithm": "none",
+    "stability_algorithm_configs": {},
     "auto_hide": True,
 
     # --- 窗口行为 ---
@@ -96,6 +101,7 @@ DEFAULT_CONFIG = {
     "use_overlay_ocr": False,      # 贴字翻译（需要 deepseek-ocr 类模型）
     "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "save_debug_images": False,         # 是否输出调试截图文件
+    "save_stability_debug_images": False, # 是否输出稳定检测阶段截图
     "log_ocr_raw": False,               # 控制台打印 OCR 原始返回
     "log_ocr_text": False,              # 控制台打印 OCR 输出全文
     "dev_tabs_unlocked": False,         # 关于页输入 ice 后解锁调试页/日志页
@@ -106,6 +112,9 @@ def load_config():
     if os.path.exists(CONFIG_FILE):
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             local_cfg = json.load(f)
+            if "capture_delay_seconds" not in local_cfg and "capture_interval" in local_cfg:
+                local_cfg["capture_delay_seconds"] = local_cfg["capture_interval"]
+            local_cfg.pop("capture_interval", None)
             for k, v in DEFAULT_CONFIG.items():
                 if k not in local_cfg:
                     local_cfg[k] = copy.deepcopy(v)
