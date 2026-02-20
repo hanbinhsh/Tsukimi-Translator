@@ -3550,6 +3550,13 @@ class MainWindow(FluentWindow):
 # ══════════════════════════════════════════════
 
 if __name__ == "__main__":
+    import ctypes
+    try:
+        # 这里的字符串可以随便写，只要保证你的应用唯一即可
+        app_id = 'icerinne.tsukimi_translator'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except Exception:
+        pass
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
