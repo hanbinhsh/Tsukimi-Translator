@@ -6,3 +6,5 @@
 /__pycache__
 /output
 /venv_pack
+/test
+__pycache__

@@ -617,13 +617,17 @@ class StabilityMonitorThread(QThread):
             runtime_cfg = dict(self.cfg)
             runtime_cfg["stability_settings"] = algo_cfg if isinstance(algo_cfg, dict) else {}
             checker = mod.StabilityChecker(runtime_cfg)
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
             detect_interval = float(runtime_cfg["stability_settings"].get("detect_interval", 1.0) or 1.0)
             detect_interval = max(0.0, detect_interval)
             print(f"[stability] 启动算法={file_name} interval={detect_interval}s")
+=======
+>>>>>>> main
         except Exception as e:
             self.failed.emit(f"加载稳定算法失败：{e}")
             return
 
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
         attempt = 0
         while self._running:
             attempt += 1
@@ -653,6 +657,17 @@ class StabilityMonitorThread(QThread):
 
                 if self._running and detect_interval > 0:
                     time.sleep(detect_interval)
+=======
+        while self._running:
+            try:
+                img_bytes = self.overlay.capture_image_bytes(for_stability=True)
+                if not img_bytes:
+                    time.sleep(0.3)
+                    continue
+                if checker.is_stable(img_bytes):
+                    self.stable.emit()
+                    return
+>>>>>>> main
             except Exception as e:
                 self.failed.emit(f"稳定检测失败：{e}")
                 return
@@ -984,7 +999,10 @@ class SubtitleOverlay(QWidget):
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
         self._latest_ocr_image_size: tuple[int, int] | None = None
         self._latest_debug_info: dict = {}
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
         self._stability_debug_index = 0
+=======
+>>>>>>> main
         self.status_signal = OverlayStatusSignal()
         self.stability_thread = None
 
@@ -1147,10 +1165,14 @@ class SubtitleOverlay(QWidget):
         if self.stability_thread and isValid(self.stability_thread):
             self.stability_thread.stop()
             self.stability_thread.quit()
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
             if not self.stability_thread.wait(2000):
                 print("[stability] 检测线程退出超时，强制终止")
                 self.stability_thread.terminate()
                 self.stability_thread.wait(500)
+=======
+            self.stability_thread.wait(500)
+>>>>>>> main
         self.stability_thread = None
 
     def _is_smart_delay_enabled(self) -> bool:
@@ -1369,6 +1391,7 @@ class SubtitleOverlay(QWidget):
             if self.cfg.get("save_debug_images", False) and not for_stability:
                 with open(debug_path, "wb") as f:
                     f.write(img_bytes)
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
             if for_stability and self.cfg.get("save_stability_debug_images", False):
                 self._stability_debug_index += 1
                 st_path = f"debug_stability_{self._stability_debug_index:04d}.png"
@@ -1376,6 +1399,8 @@ class SubtitleOverlay(QWidget):
                     f.write(img_bytes)
                 with open("debug_stability_latest.png", "wb") as f:
                     f.write(img_bytes)
+=======
+>>>>>>> main
             return img_bytes
         finally:
             if should_hide and was_visible:
