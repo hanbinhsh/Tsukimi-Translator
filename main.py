@@ -2398,7 +2398,7 @@ class AboutInterface(ScrollArea):
         self.repo_api = "hanbinhsh/Tsukimi-Translator"
         self.repo_url = "https://github.com/hanbinhsh/Tsukimi-Translator"
         self.author_url = "https://github.com/hanbinhsh"
-        self.current_version = "0.1.1"
+        self.current_version = "0.1.2"
 
         self.version_card = CustomSettingCard(FIF.TAG, "当前版本", f"v{self.current_version}", self.info_group)
         self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "IceRinne aka. hanbinhsh", self.info_group)
@@ -3482,16 +3482,10 @@ class MainWindow(FluentWindow):
         self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
         save_config(self.cfg)
 
-<<<<<<< codex/save-settings-immediately-on-homepage-2w17vd
         overlay = getattr(self, "overlay", None)
         if overlay:
             overlay.cfg = self.cfg
             overlay.apply_mode()
-=======
-        if self.overlay:
-            self.overlay.cfg = self.cfg
-            self.overlay.apply_mode()
->>>>>>> main
 
     # ── 窗口刷新 ──
 
