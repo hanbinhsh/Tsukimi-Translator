@@ -82,9 +82,19 @@ def resource_path(relative_path):
 
 
 def ensure_stability_plugin_dir() -> Path:
-    base = Path(__file__).resolve().parent / "plugin" / "Image stability"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
+    """确保并返回稳定算法插件的绝对路径（支持外部动态读取）"""
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的 exe，基础路径指向 exe 文件所在的真实物理目录
+        base = Path(sys.executable).parent
+    else:
+        # 如果是在本地跑 Python 脚本，正常使用当前 main.py 所在目录
+        base = Path(__file__).resolve().parent
+
+    plugin_dir = base / "plugin" / "Image stability"
+    # 如果目录不存在，自动在 exe 旁边创建出来
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    
+    return plugin_dir
 
 
 def scan_stability_algorithms() -> list[tuple[str, str]]:
@@ -2388,7 +2398,7 @@ class AboutInterface(ScrollArea):
         self.repo_api = "hanbinhsh/Tsukimi-Translator"
         self.repo_url = "https://github.com/hanbinhsh/Tsukimi-Translator"
         self.author_url = "https://github.com/hanbinhsh"
-        self.current_version = "0.1"
+        self.current_version = "0.1.1"
 
         self.version_card = CustomSettingCard(FIF.TAG, "当前版本", f"v{self.current_version}", self.info_group)
         self.author_card = CustomSettingCard(FIF.PEOPLE, "作者", "IceRinne aka. hanbinhsh", self.info_group)
