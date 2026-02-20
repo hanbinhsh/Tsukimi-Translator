@@ -1583,7 +1583,7 @@ class SettingInterface(ScrollArea):
 
         self.delay_time_card = CustomSettingCard(FIF.HISTORY, "延迟时间", "单位：秒，可输入小数", self.mode_group)
         self.delay_time_spin = DoubleSpinBox()
-        self.delay_time_spin.setRange(0.1, 30.0)
+        self.delay_time_spin.setRange(0.0, 30.0)
         self.delay_time_spin.setSingleStep(0.1)
         self.delay_time_spin.setValue(1.5)
         self.delay_time_card.addWidget(self.delay_time_spin)

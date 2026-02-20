@@ -3,8 +3,8 @@
 /debug_current_vision.jpg
 /debug_current_vision.png
 /tempCodeRunnerFile.py
-/__pycache__
 /output
 /venv_pack
 /test
 __pycache__
+debug_stability_*.png
