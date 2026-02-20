@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
                                 QHeaderView, QDialog, QAbstractItemView, QFileDialog)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
-                           QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
+                           QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap, QImage)
 from shiboken6 import isValid
 from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
                              setTheme, Theme, CardWidget, LineEdit, TextEdit,
@@ -1329,14 +1329,18 @@ class SubtitleOverlay(QWidget):
     def capture_image_bytes(self, for_stability=False):
         source = self.cfg.get("capture_source", "window")
         import mss
-        from PySide6.QtGui import QImage, QPixmap
+
+        app = QApplication.instance()
+        in_gui_thread = bool(app) and QThread.currentThread() == app.thread()
 
         was_visible = self.isVisible()
         should_hide = self.cfg.get("auto_hide", True)
         text_overlay_visible = bool(
             self.text_overlay and isValid(self.text_overlay) and self.text_overlay.isVisible()
         )
-        if should_hide and was_visible:
+        # 稳定性检测运行在线程里时，禁止操作 QWidget，避免跨线程调用导致崩溃。
+        allow_ui_ops = in_gui_thread
+        if should_hide and was_visible and allow_ui_ops:
             self.setVisible(False)
             if text_overlay_visible:
                 self.text_overlay.setVisible(False)
@@ -1362,15 +1366,14 @@ class SubtitleOverlay(QWidget):
                 shot = sct.grab(mss_rect)
 
             img = QImage(shot.raw, shot.width, shot.height, shot.width * 4, QImage.Format.Format_ARGB32)
-            pix = QPixmap.fromImage(img)
-            if pix.isNull():
+            if img.isNull():
                 return None
 
             scale = self.cfg.get("scale_factor", 0.5)
             if scale < 1.0:
-                pix = pix.scaled(int(w * scale), int(h * scale), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                img = img.scaled(int(w * scale), int(h * scale), Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-            self._latest_ocr_image_size = (pix.width(), pix.height())
+            self._latest_ocr_image_size = (img.width(), img.height())
             img_format = str(self.cfg.get("ocr_image_format", "PNG")).upper()
             if img_format not in ("PNG", "JPEG", "JPG"):
                 img_format = "PNG"
@@ -1379,10 +1382,10 @@ class SubtitleOverlay(QWidget):
             buf.open(QIODevice.WriteOnly)
             if img_format in ("JPEG", "JPG"):
                 jpeg_q = int(self.cfg.get("ocr_image_quality", 95))
-                pix.save(buf, "JPEG", max(1, min(100, jpeg_q)))
+                img.save(buf, "JPEG", max(1, min(100, jpeg_q)))
                 debug_path = "debug_current_vision.jpg"
             else:
-                pix.save(buf, "PNG")
+                img.save(buf, "PNG")
                 debug_path = "debug_current_vision.png"
             img_bytes = bytes(buf.data())
             buf.close()
@@ -1393,7 +1396,7 @@ class SubtitleOverlay(QWidget):
             if for_stability and self.cfg.get("save_stability_debug_images", False):
                 st_buf = QBuffer()
                 st_buf.open(QIODevice.WriteOnly)
-                pix.save(st_buf, "PNG")
+                img.save(st_buf, "PNG")
                 st_bytes = bytes(st_buf.data())
                 st_buf.close()
                 self._stability_debug_index += 1
@@ -1404,7 +1407,7 @@ class SubtitleOverlay(QWidget):
                     f.write(st_bytes)
             return img_bytes
         finally:
-            if should_hide and was_visible:
+            if should_hide and was_visible and allow_ui_ops:
                 self.setVisible(True)
                 if text_overlay_visible and self.text_overlay and isValid(self.text_overlay):
                     self.text_overlay.setVisible(True)
