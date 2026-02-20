@@ -624,6 +624,7 @@ class StabilityMonitorThread(QThread):
         while self._running:
             try:
                 img_bytes = self.overlay.capture_image_bytes(for_stability=True)
+                print("[stability_monitor] captured image for stability check, size:", len(img_bytes) if img_bytes else "None")
                 if not img_bytes:
                     time.sleep(0.3)
                     continue
