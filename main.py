@@ -1202,7 +1202,7 @@ class SubtitleOverlay(QWidget):
             return
 
         self._hide_until_next_success = True
-        self._set_capture_visibility(False, True)
+        self._set_text_overlay_visibility(False)
         self.set_status("等待稳定中")
         self.stop_stability_monitor()
         self.stability_thread = StabilityMonitorThread(self, self.cfg)
@@ -1213,9 +1213,7 @@ class SubtitleOverlay(QWidget):
     def on_stability_failed(self, msg: str):
         print(f"[stability] {msg}")
         self._request_locked = False
-        self._hide_until_next_success = False
         self.set_status("等待截图")
-        self._set_capture_visibility(bool(self.cfg.get("window_visible", True)), True)
 
     def on_stability_ready(self):
         self.set_status("等待截图")
@@ -1375,6 +1373,11 @@ class SubtitleOverlay(QWidget):
         if text_overlay_visible and self.text_overlay and isValid(self.text_overlay):
             self.text_overlay.setVisible(visible)
         QApplication.processEvents()
+
+    def _set_text_overlay_visibility(self, visible: bool):
+        if self.text_overlay and isValid(self.text_overlay):
+            self.text_overlay.setVisible(visible)
+            QApplication.processEvents()
 
     def capture_image_bytes(self, for_stability=False):
         source = self.cfg.get("capture_source", "window")
@@ -1539,7 +1542,7 @@ class SubtitleOverlay(QWidget):
             self._adjust_size()
             if self._hide_until_next_success:
                 self._hide_until_next_success = False
-                self._set_capture_visibility(bool(self.cfg.get("window_visible", True)), True)
+                self._set_text_overlay_visibility(True)
 
     def on_partial_text(self, text: str):
         """流式输出：累计更新译文"""
@@ -1576,7 +1579,7 @@ class SubtitleOverlay(QWidget):
             self._adjust_size()
             if self._hide_until_next_success:
                 self._hide_until_next_success = False
-                self._set_capture_visibility(bool(self.cfg.get("window_visible", True)), True)
+                self._set_text_overlay_visibility(True)
 
         self.is_processing = False
         self._request_locked = False
