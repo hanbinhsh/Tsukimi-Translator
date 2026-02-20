@@ -981,6 +981,8 @@ class SubtitleOverlay(QWidget):
         self.cfg = config
         self.is_processing = False
         self.worker_thread = None
+        self._request_locked = False
+        self._hide_until_next_success = False
         self.step1_duration = 0
         self._bottom_anchor = None   # 用于"向上扩展"模式固定底部
 
@@ -1183,7 +1185,10 @@ class SubtitleOverlay(QWidget):
     def trigger_signal(self):
         if time.time() - self.last_trigger_time <= 0.4:
             return
+        if self.cfg.get("block_retrigger_before_result", True) and self._request_locked:
+            return
         self.last_trigger_time = time.time()
+        self._request_locked = True
         if not self._is_smart_delay_enabled():
             delay_s = max(0.0, float(self.cfg.get("capture_delay_seconds", 1.5) or 0.0))
             if delay_s <= 0:
@@ -1196,12 +1201,19 @@ class SubtitleOverlay(QWidget):
             self.input_signal.triggered.emit()
             return
 
+        self._hide_until_next_success = True
+        self._set_text_overlay_visibility(False)
         self.set_status("等待稳定中")
         self.stop_stability_monitor()
         self.stability_thread = StabilityMonitorThread(self, self.cfg)
         self.stability_thread.stable.connect(self.on_stability_ready)
-        self.stability_thread.failed.connect(lambda msg: (print(f"[stability] {msg}"), self.set_status("等待截图")))
+        self.stability_thread.failed.connect(self.on_stability_failed)
         self.stability_thread.start()
+
+    def on_stability_failed(self, msg: str):
+        print(f"[stability] {msg}")
+        self._request_locked = False
+        self.set_status("等待截图")
 
     def on_stability_ready(self):
         self.set_status("等待截图")
@@ -1362,6 +1374,11 @@ class SubtitleOverlay(QWidget):
             self.text_overlay.setVisible(visible)
         QApplication.processEvents()
 
+    def _set_text_overlay_visibility(self, visible: bool):
+        if self.text_overlay and isValid(self.text_overlay):
+            self.text_overlay.setVisible(visible)
+            QApplication.processEvents()
+
     def capture_image_bytes(self, for_stability=False):
         source = self.cfg.get("capture_source", "window")
         import mss
@@ -1462,6 +1479,7 @@ class SubtitleOverlay(QWidget):
 
             img_bytes = self.capture_image_bytes()
             if not img_bytes:
+                self._request_locked = False
                 return
 
             self.step1_duration = time.perf_counter() - step1_start
@@ -1485,6 +1503,7 @@ class SubtitleOverlay(QWidget):
         except Exception as e:
             print(f"[capture_task error] {e}")
             self.is_processing = False
+            self._request_locked = False
             self.set_status("等待截图")
 
     # ── 翻译结果回调 ──
@@ -1521,6 +1540,9 @@ class SubtitleOverlay(QWidget):
             debug_text = "\n\n".join(overlay_lines)
             self.trans_label.setText(self._post_process_text(debug_text))
             self._adjust_size()
+            if self._hide_until_next_success:
+                self._hide_until_next_success = False
+                self._set_text_overlay_visibility(True)
 
     def on_partial_text(self, text: str):
         """流式输出：累计更新译文"""
@@ -1555,8 +1577,12 @@ class SubtitleOverlay(QWidget):
             if self.cfg.get("auto_copy"):
                 QGuiApplication.clipboard().setText(processed)
             self._adjust_size()
+            if self._hide_until_next_success:
+                self._hide_until_next_success = False
+                self._set_text_overlay_visibility(True)
 
         self.is_processing = False
+        self._request_locked = False
         self.set_status("等待截图")
 
 
@@ -1730,8 +1756,18 @@ class SettingInterface(ScrollArea):
         self.sw_remove_blank = SwitchButton()
         self.remove_blank_card.addWidget(self.sw_remove_blank)
 
+        self.block_retrigger_card = CustomSettingCard(
+            FIF.HISTORY,
+            "识别返回前屏蔽识别请求",
+            "防止连续触发导致翻译堆积卡死（推荐开启）",
+            self.perf_group
+        )
+        self.sw_block_retrigger = SwitchButton()
+        self.block_retrigger_card.addWidget(self.sw_block_retrigger)
+
         for card in (self.scale_card, self.stream_card, self.ocr_sw_card,
-                     self.llm_sw_card, self.copy_sw_card, self.remove_blank_card):
+                     self.llm_sw_card, self.copy_sw_card, self.remove_blank_card,
+                     self.block_retrigger_card):
             self.perf_group.addSettingCard(card)
         self.layout.addWidget(self.perf_group)
 
@@ -3281,6 +3317,7 @@ class MainWindow(FluentWindow):
         s.sw_llm.setChecked(self.cfg.get("use_llm", True))
         s.sw_copy.setChecked(self.cfg.get("auto_copy", False))
         s.sw_remove_blank.setChecked(self.cfg.get("remove_blank_lines", False))
+        s.sw_block_retrigger.setChecked(self.cfg.get("block_retrigger_before_result", True))
 
         self.overlay_page.sw_show_ocr.setChecked(self.cfg.get("show_ocr_text", False))
         self.overlay_page.ocr_color_btn.setColor(self.cfg.get("ocr_color", "#FFFF88"))
@@ -3387,6 +3424,7 @@ class MainWindow(FluentWindow):
             "use_llm":             s.sw_llm.isChecked(),
             "auto_copy":           s.sw_copy.isChecked(),
             "remove_blank_lines":  s.sw_remove_blank.isChecked(),
+            "block_retrigger_before_result": s.sw_block_retrigger.isChecked(),
             "use_overlay_ocr":     self.overlay_page.sw_overlay_ocr.isChecked(),
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),

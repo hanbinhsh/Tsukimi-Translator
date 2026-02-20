@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "overlay_max_line_gap": 4,       # 相邻文本框间距小于该值时可拼接
     "overlay_joiner": " ",           # 拼接字符（中日文可设为空）
     "remove_blank_lines": False,      # 自动移除翻译文本框中的空行
+    "block_retrigger_before_result": True,  # 识别返回前屏蔽重复触发
     "line_start_chars": ",.;:!?)]}、，。！？；：」』）】》",  # 下一行若以这些字符开头则判定为续句
     "line_end_chars": ".!?。！？…",  # 上一行若以这些字符结尾则判定为一句结束
 
