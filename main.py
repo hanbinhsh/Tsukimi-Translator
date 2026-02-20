@@ -4,13 +4,14 @@ import time
 import re
 import copy
 import json
+import importlib.util
 from pathlib import Path
 import requests
 from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QFrame,
                                 QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
-                                QHeaderView, QDialog, QAbstractItemView)
+                                QHeaderView, QDialog, QAbstractItemView, QFileDialog)
 from PySide6.QtGui import (QGuiApplication, QPainter, QPen, QColor,
                            QFont, QPainterPath, QFontMetrics, QIcon, QDesktopServices, QPixmap)
 from shiboken6 import isValid
@@ -77,6 +78,55 @@ def resource_path(relative_path):
         return os.path.join(sys._MEIPASS, relative_path)
     # 本地开发时的原始目录
     return os.path.join(os.path.abspath("."), relative_path)
+
+
+def ensure_stability_plugin_dir() -> Path:
+    base = Path(__file__).resolve().parent / "plugin" / "Image stability"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def scan_stability_algorithms() -> list[tuple[str, str]]:
+    """返回 [(文件名, 展示名)]。"""
+    plugin_dir = ensure_stability_plugin_dir()
+    results: list[tuple[str, str]] = []
+    for py in sorted(plugin_dir.glob("*.py")):
+        if py.name.startswith("_"):
+            continue
+        display_name = py.stem
+        try:
+            spec = importlib.util.spec_from_file_location(f"stability_{py.stem}", py)
+            if spec and spec.loader:
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                display_name = getattr(mod, "DISPLAY_NAME", py.stem)
+        except Exception:
+            display_name = py.stem
+        results.append((py.name, str(display_name)))
+    return results
+
+
+
+def load_stability_module(file_name: str):
+    if not file_name or file_name == "none":
+        return None
+    plugin_path = ensure_stability_plugin_dir() / file_name
+    if not plugin_path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location(f"stability_module_{plugin_path.stem}", plugin_path)
+    if not spec or not spec.loader:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def get_stability_schema(file_name: str) -> list[dict]:
+    mod = load_stability_module(file_name)
+    if mod is None:
+        return []
+    schema = getattr(mod, "SETTINGS_SCHEMA", [])
+    return schema if isinstance(schema, list) else []
 
 def _normalize_rule_group(raw: dict, idx: int) -> dict:
     rules = []
@@ -168,6 +218,10 @@ def apply_rule_groups(text: str, groups: list[dict]) -> str:
 
 class InputSignal(QObject):
     triggered = Signal()
+
+
+class OverlayStatusSignal(QObject):
+    changed = Signal(str)
 
 
 class ConsoleSignal(QObject):
@@ -528,6 +582,61 @@ class TranslationThread(QThread):
         self.finished.emit(final_text, time.perf_counter() - ai_start, debug_info)
 
 
+class StabilityMonitorThread(QThread):
+    stable = Signal()
+    failed = Signal(str)
+
+    def __init__(self, overlay, cfg: dict):
+        super().__init__()
+        self.overlay = overlay
+        self.cfg = cfg
+        self._running = True
+
+    def stop(self):
+        self._running = False
+
+    def run(self):
+        file_name = self.cfg.get("stability_algorithm", "")
+        if not file_name or file_name == "none":
+            self.stable.emit()
+            return
+
+        plugin_path = ensure_stability_plugin_dir() / file_name
+        if not plugin_path.exists():
+            self.failed.emit(f"稳定算法不存在：{file_name}")
+            return
+
+        try:
+            spec = importlib.util.spec_from_file_location(f"stability_runtime_{plugin_path.stem}", plugin_path)
+            if not spec or not spec.loader:
+                raise RuntimeError("算法加载失败")
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            algo_cfg_map = self.cfg.get("stability_algorithm_configs", {}) or {}
+            algo_cfg = algo_cfg_map.get(file_name, {}) if isinstance(algo_cfg_map, dict) else {}
+            runtime_cfg = dict(self.cfg)
+            runtime_cfg["stability_settings"] = algo_cfg if isinstance(algo_cfg, dict) else {}
+            checker = mod.StabilityChecker(runtime_cfg)
+        except Exception as e:
+            self.failed.emit(f"加载稳定算法失败：{e}")
+            return
+
+        while self._running:
+            try:
+                img_bytes = self.overlay.capture_image_bytes(for_stability=True)
+                if not img_bytes:
+                    time.sleep(0.3)
+                    continue
+                if checker.is_stable(img_bytes):
+                    self.stable.emit()
+                    return
+            except Exception as e:
+                self.failed.emit(f"稳定检测失败：{e}")
+                return
+
+        self.failed.emit("稳定检测已取消")
+
+
 # ══════════════════════════════════════════════
 # 带描边的彩色文字标签
 # ══════════════════════════════════════════════
@@ -852,6 +961,8 @@ class SubtitleOverlay(QWidget):
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
         self._latest_ocr_image_size: tuple[int, int] | None = None
         self._latest_debug_info: dict = {}
+        self.status_signal = OverlayStatusSignal()
+        self.stability_thread = None
 
         self.update_window_flags()
 
@@ -933,6 +1044,7 @@ class SubtitleOverlay(QWidget):
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.capture_task)
+        self.set_status("等待截图")
         self.apply_mode()
 
     # ── 窗口属性 ──
@@ -979,24 +1091,43 @@ class SubtitleOverlay(QWidget):
 
     # ── 模式控制 ──
 
+    def set_status(self, text: str):
+        self.status_signal.changed.emit(text)
+
     def apply_mode(self):
         self.timer.stop()
         self.stop_listeners()
+        self.stop_stability_monitor()
         mode = self.cfg.get("capture_mode", "interval")
+        delay_s = max(0.1, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
         if mode == "interval":
-            self.timer.start(int(self.cfg.get("capture_interval", 2.5) * 1000))
-        elif mode == "trigger":
-            key_name = self.cfg.get("trigger_key", "Left Click")
-            if "Click" in key_name:
-                self.mouse_listener = mouse.Listener(on_click=self.on_mouse_click)
-                self.mouse_listener.start()
-            else:
-                self.key_listener = keyboard.Listener(on_release=self.on_key_release)
-                self.key_listener.start()
+            self.timer.start(int(delay_s * 1000))
+            return
+
+        key_name = self.cfg.get("trigger_key", "Left Click")
+        if key_name == "无":
+            self.timer.start(int(delay_s * 1000))
+            return
+        if key_name in ("Left Click", "Right Click"):
+            self.mouse_listener = mouse.Listener(on_click=self.on_mouse_click)
+            self.mouse_listener.start()
+            return
+        self.key_listener = keyboard.Listener(on_release=self.on_key_release)
+        self.key_listener.start()
 
     def stop_listeners(self):
         if self.mouse_listener: self.mouse_listener.stop(); self.mouse_listener = None
         if self.key_listener:   self.key_listener.stop();   self.key_listener   = None
+
+    def stop_stability_monitor(self):
+        if self.stability_thread and isValid(self.stability_thread):
+            self.stability_thread.stop()
+            self.stability_thread.quit()
+            self.stability_thread.wait(500)
+        self.stability_thread = None
+
+    def _is_smart_delay_enabled(self) -> bool:
+        return bool(self.cfg.get("enable_smart_delay", False))
 
     def on_mouse_click(self, x, y, button, pressed):
         target = mouse.Button.left if self.cfg["trigger_key"] == "Left Click" else mouse.Button.right
@@ -1006,14 +1137,31 @@ class SubtitleOverlay(QWidget):
     def on_key_release(self, key):
         try:
             t = self.cfg["trigger_key"]
-            if t == "Space" and key == keyboard.Key.space: self.trigger_signal()
-            elif t == "Enter" and key == keyboard.Key.enter: self.trigger_signal()
-        except: pass
+            if t == "Space" and key == keyboard.Key.space:
+                self.trigger_signal()
+            elif t == "Enter" and key == keyboard.Key.enter:
+                self.trigger_signal()
+            elif t == "自定义按键":
+                custom = str(self.cfg.get("custom_trigger_key", "")).strip().lower()
+                if hasattr(key, "char") and key.char and key.char.lower() == custom:
+                    self.trigger_signal()
+        except Exception:
+            pass
 
     def trigger_signal(self):
-        if time.time() - self.last_trigger_time > 1.0:
-            self.last_trigger_time = time.time()
+        if time.time() - self.last_trigger_time <= 0.4:
+            return
+        self.last_trigger_time = time.time()
+        if not self._is_smart_delay_enabled() or self.cfg.get("stability_algorithm", "none") == "none":
             self.input_signal.triggered.emit()
+            return
+
+        self.set_status("等待稳定中")
+        self.stop_stability_monitor()
+        self.stability_thread = StabilityMonitorThread(self, self.cfg)
+        self.stability_thread.stable.connect(self.input_signal.triggered.emit)
+        self.stability_thread.failed.connect(lambda msg: (print(f"[stability] {msg}"), self.set_status("等待截图")))
+        self.stability_thread.start()
 
     # ── 布局热更新 ──
 
@@ -1128,108 +1276,94 @@ class SubtitleOverlay(QWidget):
     # ── 截图主流程 ──
 
     def _reset_text_overlay_before_capture(self):
-        """
-        下一次截图前先清掉旧贴字浮层，避免模型反复识别自己上一次贴出来的文本。
-        """
+        """下一次截图前先清掉旧贴字浮层，避免循环识别。"""
         if self.text_overlay and isValid(self.text_overlay):
             self.text_overlay.clear_items()
             self.text_overlay.close()
             self.text_overlay = None
             QApplication.processEvents()
 
-    def capture_task(self):
-        if self.is_processing: return
+    def capture_image_bytes(self, for_stability=False):
+        source = self.cfg.get("capture_source", "window")
+        import mss
+        from PySide6.QtGui import QImage, QPixmap
 
-        step1_start = time.perf_counter()
+        was_visible = self.isVisible()
+        should_hide = self.cfg.get("auto_hide", True) and not for_stability
+        if should_hide and was_visible:
+            self.setVisible(False)
+            QApplication.processEvents()
+            time.sleep(0.02)
+
         try:
-            # 贴字模式下，截图前先移除已有贴字窗口，防止出现循环识别
-            if self.cfg.get("use_overlay_ocr", False):
-                self._reset_text_overlay_before_capture()
-
-            was_visible = self.isVisible()
-            should_hide = self.cfg.get("auto_hide", True)
-            if should_hide and was_visible:
-                self.setVisible(False)
-                QApplication.processEvents()
-                time.sleep(0.02)
-
-            # ── 确定截图范围（mss 物理坐标）──
-            source = self.cfg.get("capture_source", "window")
-            import mss
-            from PySide6.QtGui import QImage, QPixmap
-
             if source == "region":
                 region = self.cfg.get("capture_region")
                 if not region:
-                    if should_hide and was_visible: self.setVisible(True)
-                    return
+                    return None
                 screen_name = self.cfg.get("capture_screen_name", "")
                 mss_rect = self._region_to_mss_rect(region, screen_name)
-                x, y, w, h = (mss_rect["left"], mss_rect["top"],
-                               mss_rect["_phys_w"], mss_rect["_phys_h"])
+                w, h = mss_rect["_phys_w"], mss_rect["_phys_h"]
             else:
                 hwnd = self.cfg.get("target_hwnd", 0)
                 if not hwnd:
-                    if should_hide and was_visible: self.setVisible(True)
-                    return
+                    return None
                 x, y, w, h = get_window_rect(hwnd)
                 mss_rect = {"left": x, "top": y, "width": w, "height": h}
 
-            # ── 用 mss 截图（支持跨显示器，支持硬件加速窗口）──
             with mss.mss() as sct:
                 shot = sct.grab(mss_rect)
 
-            # 截图完成后再恢复显示
-            if should_hide and was_visible:
-                self.setVisible(True)
-
-            # mss 返回 BGRA，转为 QImage → QPixmap
-            img = QImage(
-                shot.raw, shot.width, shot.height,
-                shot.width * 4, QImage.Format.Format_ARGB32
-            )
+            img = QImage(shot.raw, shot.width, shot.height, shot.width * 4, QImage.Format.Format_ARGB32)
             pix = QPixmap.fromImage(img)
-
             if pix.isNull():
-                self.is_processing = False
-                return
+                return None
 
             scale = self.cfg.get("scale_factor", 0.5)
             if scale < 1.0:
-                pix = pix.scaled(
-                    int(w * scale), int(h * scale),
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation
-                )
+                pix = pix.scaled(int(w * scale), int(h * scale), Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
             self._latest_ocr_image_size = (pix.width(), pix.height())
-
             img_format = str(self.cfg.get("ocr_image_format", "PNG")).upper()
             if img_format not in ("PNG", "JPEG", "JPG"):
                 img_format = "PNG"
 
-            # OCR 请求与调试文件使用同一份编码字节，避免二次压缩带来的识别差异。
             buf = QBuffer()
             buf.open(QIODevice.WriteOnly)
             if img_format in ("JPEG", "JPG"):
                 jpeg_q = int(self.cfg.get("ocr_image_quality", 95))
-                jpeg_q = max(1, min(100, jpeg_q))
-                pix.save(buf, "JPEG", jpeg_q)
+                pix.save(buf, "JPEG", max(1, min(100, jpeg_q)))
                 debug_path = "debug_current_vision.jpg"
             else:
                 pix.save(buf, "PNG")
                 debug_path = "debug_current_vision.png"
-
             img_bytes = bytes(buf.data())
             buf.close()
 
-            if self.cfg.get("save_debug_images", False):
+            if self.cfg.get("save_debug_images", False) and not for_stability:
                 with open(debug_path, "wb") as f:
                     f.write(img_bytes)
+            return img_bytes
+        finally:
+            if should_hide and was_visible:
+                self.setVisible(True)
+
+    def capture_task(self):
+        if self.is_processing:
+            return
+
+        step1_start = time.perf_counter()
+        try:
+            if self.cfg.get("use_overlay_ocr", False):
+                self._reset_text_overlay_before_capture()
+
+            img_bytes = self.capture_image_bytes()
+            if not img_bytes:
+                return
 
             self.step1_duration = time.perf_counter() - step1_start
-            self.is_processing  = True
+            self.is_processing = True
+            self.set_status("OCR识别中")
 
-            # ── 贴字模式：确保浮层窗口已创建 ──
             if self.cfg.get("use_overlay_ocr", False):
                 region = self.cfg.get("capture_region")
                 if region and (self.text_overlay is None or not isValid(self.text_overlay)):
@@ -1247,12 +1381,14 @@ class SubtitleOverlay(QWidget):
         except Exception as e:
             print(f"[capture_task error] {e}")
             self.is_processing = False
-            if self.cfg.get("auto_hide", True): self.setVisible(True)
+            self.set_status("等待截图")
 
     # ── 翻译结果回调 ──
 
     def on_ocr_ready(self, text: str):
         """OCR 阶段完成，展示原文（若设置开启）"""
+        if self.cfg.get("use_llm", True):
+            self.set_status("LLM处理中")
         clean_text = self._post_process_text(text)
         if self.cfg.get("show_ocr_text", False) and clean_text.strip():
             self.ocr_label.setText(clean_text)
@@ -1317,6 +1453,7 @@ class SubtitleOverlay(QWidget):
             self._adjust_size()
 
         self.is_processing = False
+        self.set_status("等待截图")
 
 
     @staticmethod
@@ -1354,6 +1491,7 @@ class SubtitleOverlay(QWidget):
     def closeEvent(self, e):
         self.timer.stop()
         self.stop_listeners()
+        self.stop_stability_monitor()
         if self.worker_thread and isValid(self.worker_thread):
             self.worker_thread.terminate()
         if self.text_overlay and isValid(self.text_overlay):
@@ -1383,19 +1521,43 @@ class SettingInterface(ScrollArea):
         self.mode_seg.addItem("trigger",  "按键触发")
         self.mode_card.addWidget(self.mode_seg)
 
-        self.interval_card = CustomSettingCard(FIF.HISTORY, "定时截图间隔", "单位：秒", self.mode_group)
-        self.interval_spin = DoubleSpinBox()
-        self.interval_spin.setRange(0.5, 10.0); self.interval_spin.setSingleStep(0.5)
-        self.interval_card.addWidget(self.interval_spin)
-
-        self.trigger_card = CustomSettingCard(FIF.TAG, "触发按键", "在游戏中按下此键时翻译", self.mode_group)
+        self.trigger_card = CustomSettingCard(FIF.TAG, "触发按键", "保留原逻辑，并支持无/自定义", self.mode_group)
         self.trigger_combo = ComboBox()
-        self.trigger_combo.addItems(["Left Click", "Right Click", "Space", "Enter"])
+        self.trigger_combo.addItems(["Left Click", "Right Click", "Space", "Enter", "无", "自定义按键"])
         self.trigger_card.addWidget(self.trigger_combo)
 
+        self.custom_trigger_card = CustomSettingCard(FIF.EDIT, "自定义按键", "输入单个按键字符（例如 g）", self.mode_group)
+        self.custom_trigger_edit = LineEdit()
+        self.custom_trigger_edit.setPlaceholderText("例如：g")
+        self.custom_trigger_card.addWidget(self.custom_trigger_edit)
+
+        self.delay_mode_card = CustomSettingCard(FIF.HISTORY, "延迟策略", "固定延迟或智能延迟", self.mode_group)
+        self.delay_mode_seg = SegmentedWidget(self.view)
+        self.delay_mode_seg.addItem("fixed", "延迟时间")
+        self.delay_mode_seg.addItem("smart", "智能延迟")
+        self.delay_mode_card.addWidget(self.delay_mode_seg)
+
+        self.delay_time_card = CustomSettingCard(FIF.HISTORY, "延迟时间", "单位：秒，可输入小数", self.mode_group)
+        self.delay_time_spin = DoubleSpinBox()
+        self.delay_time_spin.setRange(0.1, 30.0)
+        self.delay_time_spin.setSingleStep(0.1)
+        self.delay_time_spin.setValue(1.5)
+        self.delay_time_card.addWidget(self.delay_time_spin)
+
+        self.smart_algo_card = CustomSettingCard(FIF.MENU, "检测算法", "动态读取 plugin/Image stability 下 py 文件", self.mode_group)
+        self.smart_algo_combo = ComboBox()
+        self.smart_algo_card.addWidget(self.smart_algo_combo)
+
+        self.smart_config_controls = {}
+        self.smart_config_cards = []
+        self.smart_config_cache = {}
+
         self.mode_group.addSettingCard(self.mode_card)
-        self.mode_group.addSettingCard(self.interval_card)
         self.mode_group.addSettingCard(self.trigger_card)
+        self.mode_group.addSettingCard(self.custom_trigger_card)
+        self.mode_group.addSettingCard(self.delay_mode_card)
+        self.mode_group.addSettingCard(self.delay_time_card)
+        self.mode_group.addSettingCard(self.smart_algo_card)
         self.layout.addWidget(self.mode_group)
 
         # ── 窗口行为 ──
@@ -1484,10 +1646,159 @@ class SettingInterface(ScrollArea):
 
         # 触发模式联动
         self.mode_seg.currentItemChanged.connect(self.on_mode_changed)
+        self.trigger_combo.currentTextChanged.connect(self.on_trigger_changed)
+        self.delay_mode_seg.currentItemChanged.connect(self.on_delay_mode_changed)
+        self.smart_algo_combo.currentIndexChanged.connect(self.on_algorithm_changed)
+        self.refresh_algorithms()
+
+    def refresh_algorithms(self):
+        current = self.smart_algo_combo.currentData()
+        self.smart_algo_combo.clear()
+        self.smart_algo_combo.addItem("无", userData="none")
+        for file_name, display in scan_stability_algorithms():
+            self.smart_algo_combo.addItem(display, userData=file_name)
+        if current:
+            for i in range(self.smart_algo_combo.count()):
+                if self.smart_algo_combo.itemData(i) == current:
+                    self.smart_algo_combo.setCurrentIndex(i)
+                    break
+        self.on_algorithm_changed()
+
+    def _hide_algorithm_cards(self):
+        for card in self.smart_config_cards:
+            card.hide()
+
+    def _build_algorithm_cards(self, algo: str):
+        cards = []
+        controls = {}
+        schema = get_stability_schema(algo)
+        for field in schema:
+            if not isinstance(field, dict):
+                continue
+            key = str(field.get("key", "")).strip()
+            if not key:
+                continue
+            title = str(field.get("title", key))
+            desc = str(field.get("description", ""))
+            field_type = str(field.get("type", "text"))
+            card = CustomSettingCard(FIF.SETTING, title, desc, self.mode_group)
+            widget = None
+            if field_type == "float":
+                widget = DoubleSpinBox()
+                widget.setRange(float(field.get("min", 0.0)), float(field.get("max", 9999.0)))
+                widget.setSingleStep(float(field.get("step", 0.1)))
+                widget.setValue(float(field.get("default", 0.0)))
+            elif field_type == "bool":
+                widget = SwitchButton()
+                widget.setChecked(bool(field.get("default", False)))
+            elif field_type == "choice":
+                widget = ComboBox()
+                options = field.get("options", [])
+                if isinstance(options, list):
+                    for op in options:
+                        if isinstance(op, dict):
+                            widget.addItem(str(op.get("label", op.get("value", ""))), userData=op.get("value"))
+                        else:
+                            widget.addItem(str(op), userData=str(op))
+                default_val = field.get("default")
+                for i in range(widget.count()):
+                    if widget.itemData(i) == default_val:
+                        widget.setCurrentIndex(i)
+                        break
+                controls[key] = (field_type, widget)
+            elif field_type == "file":
+                wrap = QWidget()
+                hl = QHBoxLayout(wrap)
+                hl.setContentsMargins(0, 0, 0, 0)
+                hl.setSpacing(6)
+                edit = LineEdit()
+                edit.setPlaceholderText(str(field.get("placeholder", "")))
+                edit.setText(str(field.get("default", "")))
+                btn = PushButton("选择文件")
+                filter_text = str(field.get("filter", "All Files (*)"))
+                btn.clicked.connect(lambda _, e=edit, f=filter_text: self._pick_file_to_line_edit(e, f))
+                hl.addWidget(edit)
+                hl.addWidget(btn)
+                widget = wrap
+                controls[key] = (field_type, edit)
+            else:
+                widget = LineEdit()
+                widget.setPlaceholderText(str(field.get("placeholder", "")))
+                widget.setText(str(field.get("default", "")))
+                controls[key] = (field_type, widget)
+
+            card.addWidget(widget)
+            self.mode_group.addSettingCard(card)
+            cards.append(card)
+            if key not in controls:
+                controls[key] = (field_type, widget)
+
+        self.smart_config_cache[algo] = (cards, controls)
+
+    def on_algorithm_changed(self, *_):
+        self._hide_algorithm_cards()
+        algo = self.smart_algo_combo.currentData() or "none"
+        if algo not in self.smart_config_cache:
+            self._build_algorithm_cards(algo)
+        self.smart_config_cards, self.smart_config_controls = self.smart_config_cache.get(algo, ([], {}))
+        self.on_delay_mode_changed(get_seg_key(self.delay_mode_seg, "fixed"))
+
+    def _pick_file_to_line_edit(self, edit: LineEdit, filter_text: str):
+        path, _ = QFileDialog.getOpenFileName(self, "选择文件", "", filter_text)
+        if path:
+            edit.setText(path)
+
+    def get_algorithm_settings(self) -> dict:
+        values = {}
+        for key, (field_type, widget) in self.smart_config_controls.items():
+            if field_type == "float":
+                values[key] = float(widget.value())
+            elif field_type == "bool":
+                values[key] = bool(widget.isChecked())
+            elif field_type == "choice":
+                values[key] = widget.currentData()
+            else:
+                values[key] = widget.text()
+        return values
+
+    def set_algorithm_settings(self, values: dict):
+        if not isinstance(values, dict):
+            return
+        for key, val in values.items():
+            if key not in self.smart_config_controls:
+                continue
+            field_type, widget = self.smart_config_controls[key]
+            if field_type == "float":
+                widget.setValue(float(val))
+            elif field_type == "bool":
+                widget.setChecked(bool(val))
+            elif field_type == "choice":
+                for i in range(widget.count()):
+                    if widget.itemData(i) == val:
+                        widget.setCurrentIndex(i)
+                        break
+            else:
+                widget.setText(str(val))
 
     def on_mode_changed(self, k):
-        self.interval_card.setVisible(k == "interval")
-        self.trigger_card.setVisible(k == "trigger")
+        trigger_mode = (k == "trigger")
+        self.trigger_card.setVisible(trigger_mode)
+        self.custom_trigger_card.setVisible(trigger_mode and self.trigger_combo.currentText() == "自定义按键")
+        self.delay_mode_card.setVisible(trigger_mode)
+        self.on_delay_mode_changed(get_seg_key(self.delay_mode_seg, "fixed"))
+
+    def on_trigger_changed(self, _):
+        self.custom_trigger_card.setVisible(
+            get_seg_key(self.mode_seg, "interval") == "trigger" and self.trigger_combo.currentText() == "自定义按键"
+        )
+
+    def on_delay_mode_changed(self, k):
+        trigger_mode = (get_seg_key(self.mode_seg, "interval") == "trigger")
+        self.delay_time_card.setVisible((not trigger_mode) or k == "fixed")
+        smart = trigger_mode and k == "smart"
+        self.smart_algo_card.setVisible(smart)
+        for card in self.smart_config_cards:
+            card.setVisible(smart)
 
 
 # ══════════════════════════════════════════════
@@ -2623,6 +2934,9 @@ class MainWindow(FluentWindow):
         self.top_action_layout = QHBoxLayout(self.top_action_bar)
         self.top_action_layout.setContentsMargins(16, 8, 16, 8)
         self.top_action_layout.setSpacing(8)
+        self.status_label = QLabel("状态：等待截图", self.top_action_bar)
+        self.status_label.setStyleSheet("color: rgba(235,235,235,0.9);")
+        self.top_action_layout.addWidget(self.status_label)
         self.top_action_layout.addStretch(1)
 
         self.start_nav_btn = PrimaryPushButton("启动翻译", self.top_action_bar)
@@ -2824,8 +3138,22 @@ class MainWindow(FluentWindow):
 
         s.width_spin.setValue(self.cfg.get("ui_max_width", 800))
         s.sw_hide.setChecked(self.cfg.get("auto_hide", True))
-        s.interval_spin.setValue(self.cfg.get("capture_interval", 2.5))
         s.trigger_combo.setCurrentText(self.cfg.get("trigger_key", "Left Click"))
+        s.custom_trigger_edit.setText(self.cfg.get("custom_trigger_key", ""))
+        delay_mode = self.cfg.get("trigger_delay_mode", "fixed")
+        if delay_mode not in ("fixed", "smart"):
+            delay_mode = "fixed"
+        s.delay_mode_seg.setCurrentItem(delay_mode)
+        s.delay_time_spin.setValue(float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
+        algo = self.cfg.get("stability_algorithm", "none")
+        for i in range(s.smart_algo_combo.count()):
+            if s.smart_algo_combo.itemData(i) == algo:
+                s.smart_algo_combo.setCurrentIndex(i)
+                break
+        algo_values = (self.cfg.get("stability_algorithm_configs", {}) or {}).get(algo, {})
+        s.set_algorithm_settings(algo_values)
+        s.on_trigger_changed(None)
+        s.on_delay_mode_changed(delay_mode)
         s.sw_visible.setChecked(self.cfg.get("window_visible", True))
         s.sw_top.setChecked(self.cfg.get("always_on_top", True))
         s.sw_click_through.setChecked(self.cfg.get("click_through", False))
@@ -2906,12 +3234,23 @@ class MainWindow(FluentWindow):
     def save_all(self):
         self.rule_page.sync_to_config()
         s = self.setting_page
+        algo_name = s.smart_algo_combo.currentData() or "none"
+        algo_values = s.get_algorithm_settings()
+        algo_map = dict(self.cfg.get("stability_algorithm_configs", {}) or {})
+        if algo_name and algo_name != "none":
+            algo_map[algo_name] = algo_values
+
         self.cfg.update({
             "capture_source":      get_seg_key(self.home_page.source_seg, "window"),
             "capture_mode":        get_seg_key(s.mode_seg, "interval"),
             "grow_direction":      get_seg_key(s.grow_seg, "up"),
-            "capture_interval":    s.interval_spin.value(),
+            "capture_delay_seconds": s.delay_time_spin.value(),
             "trigger_key":         s.trigger_combo.currentText(),
+            "custom_trigger_key":  s.custom_trigger_edit.text().strip(),
+            "trigger_delay_mode":  get_seg_key(s.delay_mode_seg, "fixed"),
+            "enable_smart_delay":  get_seg_key(s.mode_seg, "interval") == "trigger" and get_seg_key(s.delay_mode_seg, "fixed") == "smart",
+            "stability_algorithm": algo_name,
+            "stability_algorithm_configs": algo_map,
             "ui_max_width":        int(s.width_spin.value()),
             "auto_hide":           s.sw_hide.isChecked(),
             "window_visible":      s.sw_visible.isChecked(),
@@ -2995,13 +3334,18 @@ class MainWindow(FluentWindow):
             self.cfg["target_hwnd"]         = target if source == "window" else 0
             self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
             self.overlay = SubtitleOverlay(self.cfg)
+            self.overlay.status_signal.changed.connect(self.on_overlay_status_changed)
             if self.cfg.get("window_visible", True):
                 self.overlay.show()
             self._refresh_start_button_style()
         else:
             self.overlay.close()
             self.overlay = None
+            self.on_overlay_status_changed("等待截图")
             self._refresh_start_button_style()
+
+    def on_overlay_status_changed(self, status: str):
+        self.status_label.setText(f"状态：{status}")
 
     # ── 区域框选 ──
 
