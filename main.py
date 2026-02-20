@@ -597,6 +597,7 @@ class StabilityMonitorThread(QThread):
 
     def run(self):
         file_name = self.cfg.get("stability_algorithm", "")
+        log_debug = bool(self.cfg.get("log_stability_debug", False))
         if not file_name or file_name == "none":
             self.stable.emit()
             return
@@ -619,7 +620,8 @@ class StabilityMonitorThread(QThread):
             checker = mod.StabilityChecker(runtime_cfg)
             detect_interval = float(runtime_cfg["stability_settings"].get("detect_interval", 1.0) or 1.0)
             detect_interval = max(0.0, detect_interval)
-            print(f"[stability] 启动算法={file_name} interval={detect_interval}s")
+            if log_debug:
+                print(f"[stability] 启动算法={file_name} interval={detect_interval}s")
         except Exception as e:
             self.failed.emit(f"加载稳定算法失败：{e}")
             return
@@ -630,7 +632,8 @@ class StabilityMonitorThread(QThread):
             try:
                 img_bytes = self.overlay.capture_image_bytes(for_stability=True)
                 if not img_bytes:
-                    print(f"[stability] 第{attempt}次截图为空，300ms后重试")
+                    if log_debug:
+                        print(f"[stability] 第{attempt}次截图为空，300ms后重试")
                     time.sleep(0.3)
                     continue
 
@@ -645,7 +648,8 @@ class StabilityMonitorThread(QThread):
                     is_stable = bool(checker.is_stable(img_bytes))
                     debug = getattr(checker, "last_debug", {}) if hasattr(checker, "last_debug") else {}
                 duration = time.perf_counter() - check_start
-                print(f"[stability] 第{attempt}次检测 duration={duration:.3f}s stable={is_stable} debug={debug}")
+                if log_debug:
+                    print(f"[stability] 第{attempt}次检测 duration={duration:.3f}s stable={is_stable} debug={debug}")
 
                 if is_stable:
                     self.stable.emit()
@@ -1122,14 +1126,9 @@ class SubtitleOverlay(QWidget):
         self.timer.stop()
         self.stop_listeners()
         self.stop_stability_monitor()
-        mode = self.cfg.get("capture_mode", "interval")
-        delay_s = max(0.1, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
-        if mode == "interval":
-            self.timer.start(int(delay_s * 1000))
-            return
-
         key_name = self.cfg.get("trigger_key", "Left Click")
         if key_name == "无":
+            delay_s = max(0.1, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
             self.timer.start(int(delay_s * 1000))
             return
         if key_name in ("Left Click", "Right Click"):
@@ -1179,16 +1178,28 @@ class SubtitleOverlay(QWidget):
         if time.time() - self.last_trigger_time <= 0.4:
             return
         self.last_trigger_time = time.time()
-        if not self._is_smart_delay_enabled() or self.cfg.get("stability_algorithm", "none") == "none":
+        if not self._is_smart_delay_enabled():
+            delay_s = max(0.0, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
+            if delay_s <= 0:
+                self.input_signal.triggered.emit()
+            else:
+                QTimer.singleShot(int(delay_s * 1000), self.input_signal.triggered.emit)
+            return
+
+        if self.cfg.get("stability_algorithm", "none") == "none":
             self.input_signal.triggered.emit()
             return
 
         self.set_status("等待稳定中")
         self.stop_stability_monitor()
         self.stability_thread = StabilityMonitorThread(self, self.cfg)
-        self.stability_thread.stable.connect(self.input_signal.triggered.emit)
+        self.stability_thread.stable.connect(self.on_stability_ready)
         self.stability_thread.failed.connect(lambda msg: (print(f"[stability] {msg}"), self.set_status("等待截图")))
         self.stability_thread.start()
+
+    def on_stability_ready(self):
+        self.set_status("等待截图")
+        QTimer.singleShot(0, self.input_signal.triggered.emit)
 
     # ── 布局热更新 ──
 
@@ -1370,12 +1381,17 @@ class SubtitleOverlay(QWidget):
                 with open(debug_path, "wb") as f:
                     f.write(img_bytes)
             if for_stability and self.cfg.get("save_stability_debug_images", False):
+                st_buf = QBuffer()
+                st_buf.open(QIODevice.WriteOnly)
+                pix.save(st_buf, "PNG")
+                st_bytes = bytes(st_buf.data())
+                st_buf.close()
                 self._stability_debug_index += 1
                 st_path = f"debug_stability_{self._stability_debug_index:04d}.png"
                 with open(st_path, "wb") as f:
-                    f.write(img_bytes)
+                    f.write(st_bytes)
                 with open("debug_stability_latest.png", "wb") as f:
-                    f.write(img_bytes)
+                    f.write(st_bytes)
             return img_bytes
         finally:
             if should_hide and was_visible:
@@ -1549,12 +1565,6 @@ class SettingInterface(ScrollArea):
         # ── 截图触发策略 ──
         self.mode_group = SettingCardGroup("截图触发策略", self.view)
 
-        self.mode_card = CustomSettingCard(FIF.GAME, "触发模式", "选择自动截图或按键触发", self.mode_group)
-        self.mode_seg = SegmentedWidget(self.view)
-        self.mode_seg.addItem("interval", "定时自动")
-        self.mode_seg.addItem("trigger",  "按键触发")
-        self.mode_card.addWidget(self.mode_seg)
-
         self.trigger_card = CustomSettingCard(FIF.TAG, "触发按键", "在按下按键后，开始翻译流程", self.mode_group)
         self.trigger_combo = ComboBox()
         self.trigger_combo.addItems(["Left Click", "Right Click", "Space", "Enter", "无", "自定义按键"])
@@ -1586,7 +1596,6 @@ class SettingInterface(ScrollArea):
         self.smart_config_cards = []
         self.smart_config_cache = {}
 
-        self.mode_group.addSettingCard(self.mode_card)
         self.mode_group.addSettingCard(self.trigger_card)
         self.mode_group.addSettingCard(self.custom_trigger_card)
         self.mode_group.addSettingCard(self.delay_mode_card)
@@ -1678,8 +1687,6 @@ class SettingInterface(ScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet("background: transparent; border: none;")
 
-        # 触发模式联动
-        self.mode_seg.currentItemChanged.connect(self.on_mode_changed)
         self.trigger_combo.currentTextChanged.connect(self.on_trigger_changed)
         self.delay_mode_seg.currentItemChanged.connect(self.on_delay_mode_changed)
         self.smart_algo_combo.currentIndexChanged.connect(self.on_algorithm_changed)
@@ -1814,22 +1821,12 @@ class SettingInterface(ScrollArea):
             else:
                 widget.setText(str(val))
 
-    def on_mode_changed(self, k):
-        trigger_mode = (k == "trigger")
-        self.trigger_card.setVisible(trigger_mode)
-        self.custom_trigger_card.setVisible(trigger_mode and self.trigger_combo.currentText() == "自定义按键")
-        self.delay_mode_card.setVisible(trigger_mode)
-        self.on_delay_mode_changed(get_seg_key(self.delay_mode_seg, "fixed"))
-
     def on_trigger_changed(self, _):
-        self.custom_trigger_card.setVisible(
-            get_seg_key(self.mode_seg, "interval") == "trigger" and self.trigger_combo.currentText() == "自定义按键"
-        )
+        self.custom_trigger_card.setVisible(self.trigger_combo.currentText() == "自定义按键")
 
     def on_delay_mode_changed(self, k):
-        trigger_mode = (get_seg_key(self.mode_seg, "interval") == "trigger")
-        self.delay_time_card.setVisible((not trigger_mode) or k == "fixed")
-        smart = trigger_mode and k == "smart"
+        self.delay_time_card.setVisible(k == "fixed")
+        smart = k == "smart"
         self.smart_algo_card.setVisible(smart)
         for card in self.smart_config_cards:
             card.setVisible(smart)
@@ -2201,15 +2198,27 @@ class DebugSettingInterface(ScrollArea):
         self.sw_dump_image_card.addWidget(self.sw_dump_image)
         self.debug_group.addSettingCard(self.sw_dump_image_card)
 
+        self.stability_group = SettingCardGroup("稳定性检测调试", self.view)
+
         self.sw_stability_dump_card = CustomSettingCard(
             FIF.CAMERA,
             "输出稳定检测调试图片",
             "开启后，检测模式会输出 debug_stability_*.png（默认关闭）",
-            self.debug_group,
+            self.stability_group,
         )
         self.sw_stability_dump = SwitchButton()
         self.sw_stability_dump_card.addWidget(self.sw_stability_dump)
-        self.debug_group.addSettingCard(self.sw_stability_dump_card)
+        self.stability_group.addSettingCard(self.sw_stability_dump_card)
+
+        self.sw_log_stability_card = CustomSettingCard(
+            FIF.DOCUMENT,
+            "打印稳定性调试信息",
+            "控制台输出稳定检测每轮耗时、稳定判定和调试原因（默认关闭）",
+            self.stability_group,
+        )
+        self.sw_log_stability = SwitchButton()
+        self.sw_log_stability_card.addWidget(self.sw_log_stability)
+        self.stability_group.addSettingCard(self.sw_log_stability_card)
 
         self.sw_log_ocr_raw_card = CustomSettingCard(
             FIF.DOCUMENT,
@@ -2232,6 +2241,7 @@ class DebugSettingInterface(ScrollArea):
         self.debug_group.addSettingCard(self.sw_log_ocr_text_card)
 
         self.layout.addWidget(self.debug_group)
+        self.layout.addWidget(self.stability_group)
         self.layout.addStretch(1)
 
         self.setWidget(self.view)
@@ -3165,10 +3175,6 @@ class MainWindow(FluentWindow):
 
     def load_settings(self):
         s = self.setting_page
-        mode = self.cfg.get("capture_mode", "interval")
-        if mode not in ("interval", "trigger"): mode = "interval"
-        s.mode_seg.setCurrentItem(mode)
-        s.on_mode_changed(mode)
 
         # 截图来源
         source = self.cfg.get("capture_source", "window")
@@ -3256,6 +3262,9 @@ class MainWindow(FluentWindow):
         self.debug_page.sw_stability_dump.setChecked(
             self.cfg.get("save_stability_debug_images", False)
         )
+        self.debug_page.sw_log_stability.setChecked(
+            self.cfg.get("log_stability_debug", False)
+        )
         self.debug_page.sw_log_ocr_raw.setChecked(
             self.cfg.get("log_ocr_raw", False)
         )
@@ -3289,13 +3298,12 @@ class MainWindow(FluentWindow):
 
         self.cfg.update({
             "capture_source":      get_seg_key(self.home_page.source_seg, "window"),
-            "capture_mode":        get_seg_key(s.mode_seg, "interval"),
             "grow_direction":      get_seg_key(s.grow_seg, "up"),
             "capture_delay_seconds": s.delay_time_spin.value(),
             "trigger_key":         s.trigger_combo.currentText(),
             "custom_trigger_key":  s.custom_trigger_edit.text().strip(),
             "trigger_delay_mode":  get_seg_key(s.delay_mode_seg, "fixed"),
-            "enable_smart_delay":  get_seg_key(s.mode_seg, "interval") == "trigger" and get_seg_key(s.delay_mode_seg, "fixed") == "smart",
+            "enable_smart_delay":  get_seg_key(s.delay_mode_seg, "fixed") == "smart",
             "stability_algorithm": algo_name,
             "stability_algorithm_configs": algo_map,
             "ui_max_width":        int(s.width_spin.value()),
@@ -3330,6 +3338,7 @@ class MainWindow(FluentWindow):
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
             "save_debug_images": self.debug_page.sw_dump_image.isChecked(),
             "save_stability_debug_images": self.debug_page.sw_stability_dump.isChecked(),
+            "log_stability_debug": self.debug_page.sw_log_stability.isChecked(),
             "log_ocr_raw": self.debug_page.sw_log_ocr_raw.isChecked(),
             "log_ocr_text": self.debug_page.sw_log_ocr_text.isChecked(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),

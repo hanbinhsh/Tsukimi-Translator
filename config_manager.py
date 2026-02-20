@@ -29,7 +29,6 @@ DEFAULT_CONFIG = {
     "capture_region": None,         # 手动框选区域 {"x","y","w","h"}（屏幕相对物理像素），None 表示全窗口
     "capture_screen_name": "",      # 框选时使用的屏幕 QScreen.name()
     "capture_source": "window",        # "window" 窗口截图 / "region" 区域框选
-    "capture_mode": "interval",
     "capture_delay_seconds": 1.5,
     "trigger_key": "Left Click",
     "custom_trigger_key": "",
@@ -102,6 +101,7 @@ DEFAULT_CONFIG = {
     "show_overlay_debug_boxes": False,  # 贴字模式显示 OCR 原始检测框（调试）
     "save_debug_images": False,         # 是否输出调试截图文件
     "save_stability_debug_images": False, # 是否输出稳定检测阶段截图
+    "log_stability_debug": False,       # 控制台打印稳定性检测调试信息
     "log_ocr_raw": False,               # 控制台打印 OCR 原始返回
     "log_ocr_text": False,              # 控制台打印 OCR 输出全文
     "dev_tabs_unlocked": False,         # 关于页输入 ice 后解锁调试页/日志页
