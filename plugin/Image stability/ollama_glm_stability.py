@@ -8,9 +8,9 @@ SETTINGS_SCHEMA = [
         "key": "detect_interval",
         "type": "float",
         "title": "检测间隔",
-        "description": "多久向 Ollama 发送一次检测（秒）",
+        "description": "每次 Ollama 返回后再等待多久进行下一次检测（秒）",
         "default": 1.0,
-        "min": 0.2,
+        "min": 0.0,
         "max": 10.0,
         "step": 0.1,
     },
@@ -35,27 +35,44 @@ class StabilityChecker:
         self.last_text = ""
         self.last_changed_at = time.time()
         settings = cfg.get("stability_settings", {}) or {}
-        self.interval = float(settings.get("detect_interval", 1.0) or 1.0)
         self.wait_time = float(settings.get("stable_wait", 1.5) or 1.5)
         runtime_cfg = dict(cfg)
         runtime_cfg["ocr_model"] = "glm-ocr:latest"
         self.worker = OllamaTranslator(runtime_cfg)
+        self.last_debug = {}
 
-    def is_stable(self, image_bytes: bytes) -> bool:
+    def check(self, image_bytes: bytes):
         text, _ = self.worker.run_ocr(image_bytes, return_raw=True)
         now = time.time()
         normalized = (text or "").strip()
+
         if not normalized:
             self.last_text = ""
             self.last_changed_at = now
-            time.sleep(self.interval)
-            return False
+            self.last_debug = {"reason": "empty_text", "text_len": 0}
+            return False, self.last_debug
 
         if normalized != self.last_text:
             self.last_text = normalized
             self.last_changed_at = now
-            time.sleep(self.interval)
-            return False
+            self.last_debug = {
+                "reason": "text_changed",
+                "text_len": len(normalized),
+                "preview": normalized[:80],
+            }
+            return False, self.last_debug
 
-        time.sleep(self.interval)
-        return (now - self.last_changed_at) >= self.wait_time
+        stable_elapsed = now - self.last_changed_at
+        is_stable = stable_elapsed >= self.wait_time
+        self.last_debug = {
+            "reason": "same_text",
+            "text_len": len(normalized),
+            "stable_elapsed": round(stable_elapsed, 3),
+            "threshold": self.wait_time,
+            "preview": normalized[:80],
+        }
+        return is_stable, self.last_debug
+
+    def is_stable(self, image_bytes: bytes) -> bool:
+        ok, _ = self.check(image_bytes)
+        return ok

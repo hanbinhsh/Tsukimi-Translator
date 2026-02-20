@@ -617,10 +617,47 @@ class StabilityMonitorThread(QThread):
             runtime_cfg = dict(self.cfg)
             runtime_cfg["stability_settings"] = algo_cfg if isinstance(algo_cfg, dict) else {}
             checker = mod.StabilityChecker(runtime_cfg)
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
+            detect_interval = float(runtime_cfg["stability_settings"].get("detect_interval", 1.0) or 1.0)
+            detect_interval = max(0.0, detect_interval)
+            print(f"[stability] 启动算法={file_name} interval={detect_interval}s")
+=======
+>>>>>>> main
         except Exception as e:
             self.failed.emit(f"加载稳定算法失败：{e}")
             return
 
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
+        attempt = 0
+        while self._running:
+            attempt += 1
+            try:
+                img_bytes = self.overlay.capture_image_bytes(for_stability=True)
+                if not img_bytes:
+                    print(f"[stability] 第{attempt}次截图为空，300ms后重试")
+                    time.sleep(0.3)
+                    continue
+
+                check_start = time.perf_counter()
+                if hasattr(checker, "check"):
+                    result = checker.check(img_bytes)
+                    if isinstance(result, tuple):
+                        is_stable, debug = result
+                    else:
+                        is_stable, debug = bool(result), {}
+                else:
+                    is_stable = bool(checker.is_stable(img_bytes))
+                    debug = getattr(checker, "last_debug", {}) if hasattr(checker, "last_debug") else {}
+                duration = time.perf_counter() - check_start
+                print(f"[stability] 第{attempt}次检测 duration={duration:.3f}s stable={is_stable} debug={debug}")
+
+                if is_stable:
+                    self.stable.emit()
+                    return
+
+                if self._running and detect_interval > 0:
+                    time.sleep(detect_interval)
+=======
         while self._running:
             try:
                 img_bytes = self.overlay.capture_image_bytes(for_stability=True)
@@ -630,6 +667,7 @@ class StabilityMonitorThread(QThread):
                 if checker.is_stable(img_bytes):
                     self.stable.emit()
                     return
+>>>>>>> main
             except Exception as e:
                 self.failed.emit(f"稳定检测失败：{e}")
                 return
@@ -961,6 +999,10 @@ class SubtitleOverlay(QWidget):
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
         self._latest_ocr_image_size: tuple[int, int] | None = None
         self._latest_debug_info: dict = {}
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
+        self._stability_debug_index = 0
+=======
+>>>>>>> main
         self.status_signal = OverlayStatusSignal()
         self.stability_thread = None
 
@@ -1123,7 +1165,14 @@ class SubtitleOverlay(QWidget):
         if self.stability_thread and isValid(self.stability_thread):
             self.stability_thread.stop()
             self.stability_thread.quit()
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
+            if not self.stability_thread.wait(2000):
+                print("[stability] 检测线程退出超时，强制终止")
+                self.stability_thread.terminate()
+                self.stability_thread.wait(500)
+=======
             self.stability_thread.wait(500)
+>>>>>>> main
         self.stability_thread = None
 
     def _is_smart_delay_enabled(self) -> bool:
@@ -1342,6 +1391,16 @@ class SubtitleOverlay(QWidget):
             if self.cfg.get("save_debug_images", False) and not for_stability:
                 with open(debug_path, "wb") as f:
                     f.write(img_bytes)
+<<<<<<< codex/redesign-screenshot-trigger-options-o5gij9
+            if for_stability and self.cfg.get("save_stability_debug_images", False):
+                self._stability_debug_index += 1
+                st_path = f"debug_stability_{self._stability_debug_index:04d}.png"
+                with open(st_path, "wb") as f:
+                    f.write(img_bytes)
+                with open("debug_stability_latest.png", "wb") as f:
+                    f.write(img_bytes)
+=======
+>>>>>>> main
             return img_bytes
         finally:
             if should_hide and was_visible:
@@ -2166,6 +2225,16 @@ class DebugSettingInterface(ScrollArea):
         self.sw_dump_image = SwitchButton()
         self.sw_dump_image_card.addWidget(self.sw_dump_image)
         self.debug_group.addSettingCard(self.sw_dump_image_card)
+
+        self.sw_stability_dump_card = CustomSettingCard(
+            FIF.CAMERA,
+            "输出稳定检测调试图片",
+            "开启后，检测模式会输出 debug_stability_*.png（默认关闭）",
+            self.debug_group,
+        )
+        self.sw_stability_dump = SwitchButton()
+        self.sw_stability_dump_card.addWidget(self.sw_stability_dump)
+        self.debug_group.addSettingCard(self.sw_stability_dump_card)
 
         self.sw_log_ocr_raw_card = CustomSettingCard(
             FIF.DOCUMENT,
@@ -3209,6 +3278,9 @@ class MainWindow(FluentWindow):
         self.debug_page.sw_dump_image.setChecked(
             self.cfg.get("save_debug_images", False)
         )
+        self.debug_page.sw_stability_dump.setChecked(
+            self.cfg.get("save_stability_debug_images", False)
+        )
         self.debug_page.sw_log_ocr_raw.setChecked(
             self.cfg.get("log_ocr_raw", False)
         )
@@ -3282,6 +3354,7 @@ class MainWindow(FluentWindow):
             "show_overlay_debug_boxes": self.overlay_page.sw_overlay_boxes.isChecked(),
             "overlay_auto_merge_lines": self.overlay_page.sw_auto_merge.isChecked(),
             "save_debug_images": self.debug_page.sw_dump_image.isChecked(),
+            "save_stability_debug_images": self.debug_page.sw_stability_dump.isChecked(),
             "log_ocr_raw": self.debug_page.sw_log_ocr_raw.isChecked(),
             "log_ocr_text": self.debug_page.sw_log_ocr_text.isChecked(),
             "overlay_min_line_height": int(self.overlay_page.min_line_h_spin.value()),
