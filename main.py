@@ -1550,6 +1550,7 @@ class SettingInterface(ScrollArea):
 
         self.smart_config_controls = {}
         self.smart_config_cards = []
+        self.smart_config_cache = {}
 
         self.mode_group.addSettingCard(self.mode_card)
         self.mode_group.addSettingCard(self.trigger_card)
@@ -1663,17 +1664,13 @@ class SettingInterface(ScrollArea):
                     break
         self.on_algorithm_changed()
 
-    def _clear_algorithm_cards(self):
+    def _hide_algorithm_cards(self):
         for card in self.smart_config_cards:
             card.hide()
-            card.setParent(None)
-            card.deleteLater()
-        self.smart_config_cards.clear()
-        self.smart_config_controls.clear()
 
-    def on_algorithm_changed(self, *_):
-        self._clear_algorithm_cards()
-        algo = self.smart_algo_combo.currentData() or "none"
+    def _build_algorithm_cards(self, algo: str):
+        cards = []
+        controls = {}
         schema = get_stability_schema(algo)
         for field in schema:
             if not isinstance(field, dict):
@@ -1708,6 +1705,7 @@ class SettingInterface(ScrollArea):
                     if widget.itemData(i) == default_val:
                         widget.setCurrentIndex(i)
                         break
+                controls[key] = (field_type, widget)
             elif field_type == "file":
                 wrap = QWidget()
                 hl = QHBoxLayout(wrap)
@@ -1722,18 +1720,27 @@ class SettingInterface(ScrollArea):
                 hl.addWidget(edit)
                 hl.addWidget(btn)
                 widget = wrap
-                self.smart_config_controls[key] = (field_type, edit)
+                controls[key] = (field_type, edit)
             else:
                 widget = LineEdit()
                 widget.setPlaceholderText(str(field.get("placeholder", "")))
                 widget.setText(str(field.get("default", "")))
+                controls[key] = (field_type, widget)
 
             card.addWidget(widget)
             self.mode_group.addSettingCard(card)
-            self.smart_config_cards.append(card)
-            if key not in self.smart_config_controls:
-                self.smart_config_controls[key] = (field_type, widget)
+            cards.append(card)
+            if key not in controls:
+                controls[key] = (field_type, widget)
 
+        self.smart_config_cache[algo] = (cards, controls)
+
+    def on_algorithm_changed(self, *_):
+        self._hide_algorithm_cards()
+        algo = self.smart_algo_combo.currentData() or "none"
+        if algo not in self.smart_config_cache:
+            self._build_algorithm_cards(algo)
+        self.smart_config_cards, self.smart_config_controls = self.smart_config_cache.get(algo, ([], {}))
         self.on_delay_mode_changed(get_seg_key(self.delay_mode_seg, "fixed"))
 
     def _pick_file_to_line_edit(self, edit: LineEdit, filter_text: str):
