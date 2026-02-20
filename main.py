@@ -2033,7 +2033,7 @@ class RuleGroupEditorDialog(QDialog):
     def __init__(self, group_data: dict, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"编辑规则组 - {group_data.get('name', '')}")
-        self.resize(1210, 680)
+        self.resize(1000, 680)
         self.group_data = copy.deepcopy(group_data)
         self.rules = self.group_data.get("rules", [])
         self._copied_rule = None
@@ -2077,14 +2077,14 @@ class RuleGroupEditorDialog(QDialog):
         header_layout.setContentsMargins(8, 6, 8, 6)
         header_layout.setSpacing(8)
         header_specs = [
-            ("", 28),
+            ("", 36),
             ("名称", 170),
             ("替换文本", 220),
             ("替换为", 220),
-            ("启用", 60),
-            ("正则", 60),
-            ("区分大小写", 90),
-            ("全字匹配", 80),
+            ("启用", 36),
+            ("正则", 36),
+            ("大小写", 36),
+            ("全匹配", 36),
             ("排序", 90),
             ("删除", 60),
         ]
@@ -2175,7 +2175,7 @@ class RuleGroupEditorDialog(QDialog):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 28)
+            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 36)
             row_layout.addWidget(selected_wrap)
 
             name_edit = LineEdit(row_widget)
@@ -2195,16 +2195,16 @@ class RuleGroupEditorDialog(QDialog):
             replacement_edit.setText(rule.get("replacement", ""))
             row_layout.addWidget(replacement_edit)
 
-            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 60, bool(rule.get("enabled", True)))
+            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 36, bool(rule.get("enabled", True)))
             row_layout.addWidget(enabled_wrap)
 
-            regex_wrap, regex_cb = self._build_center_checkbox(row_widget, 60, bool(rule.get("regex", False)))
+            regex_wrap, regex_cb = self._build_center_checkbox(row_widget, 36, bool(rule.get("regex", False)))
             row_layout.addWidget(regex_wrap)
 
-            case_wrap, case_cb = self._build_center_checkbox(row_widget, 90, bool(rule.get("case_sensitive", False)))
+            case_wrap, case_cb = self._build_center_checkbox(row_widget, 36, bool(rule.get("case_sensitive", False)))
             row_layout.addWidget(case_wrap)
 
-            whole_wrap, whole_cb = self._build_center_checkbox(row_widget, 80, bool(rule.get("whole_word", False)))
+            whole_wrap, whole_cb = self._build_center_checkbox(row_widget, 36, bool(rule.get("whole_word", False)))
             row_layout.addWidget(whole_wrap)
 
             up_down = QWidget(row_widget)
@@ -2362,12 +2362,12 @@ class RuleSettingInterface(ScrollArea):
         group_header_layout.setContentsMargins(8, 6, 8, 6)
         group_header_layout.setSpacing(8)
         group_header_specs = [
-            ("", 28),
+            ("", 36),
             ("名称", 280),
             ("已启用/总数", 90),
             ("排序", 90),
             ("编辑", 60),
-            ("启用", 60),
+            ("启用", 36),
         ]
         for text, width in group_header_specs:
             label = QLabel(text, group_header)
@@ -2466,7 +2466,7 @@ class RuleSettingInterface(ScrollArea):
             row_layout.setContentsMargins(8, 6, 8, 6)
             row_layout.setSpacing(8)
 
-            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 28)
+            selected_wrap, selected_cb = self._build_center_checkbox(row_widget, 36)
             row_layout.addWidget(selected_wrap)
 
             name_edit = LineEdit(row_widget)
@@ -2498,7 +2498,7 @@ class RuleSettingInterface(ScrollArea):
             edit_btn.clicked.connect(lambda _, i=r: self.edit_group(i))
             row_layout.addWidget(edit_btn)
 
-            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 60, group.get("enabled", True))
+            enabled_wrap, enabled_cb = self._build_center_checkbox(row_widget, 36, group.get("enabled", True))
             row_layout.addWidget(enabled_wrap)
             row_layout.addStretch(1)
 
