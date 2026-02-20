@@ -3131,6 +3131,7 @@ class MainWindow(FluentWindow):
 
         self.load_settings()
         self._sync_region_ui()
+        self.overlay = None
 
         # 恢复上次选择的屏幕
         saved_name = self.cfg.get("capture_screen_name", "")
@@ -3143,10 +3144,12 @@ class MainWindow(FluentWindow):
         self.home_page.refresh_btn.clicked.connect(self.refresh_windows)
         self.home_page.region_btn.clicked.connect(self.open_region_selector)
         self.home_page.clear_region_btn.clicked.connect(self.clear_region)
+        self.home_page.source_seg.currentItemChanged.connect(self.on_home_page_config_changed)
+        self.home_page.combo.currentIndexChanged.connect(self.on_home_page_config_changed)
+        self.home_page.screen_combo.currentIndexChanged.connect(self.on_home_page_config_changed)
         self.stackedWidget.currentChanged.connect(self._on_page_changed)
 
         self.refresh_windows()
-        self.overlay = None
         self._layout_top_action_bar()
         self._refresh_start_button_style()
         self._on_page_changed(self.stackedWidget.currentIndex())
@@ -3274,6 +3277,7 @@ class MainWindow(FluentWindow):
     # ── 设置加载 ──
 
     def load_settings(self):
+        self._loading_settings = True
         s = self.setting_page
 
         # 截图来源
@@ -3372,6 +3376,7 @@ class MainWindow(FluentWindow):
         self.debug_page.sw_log_ocr_text.setChecked(
             self.cfg.get("log_ocr_text", False)
         )
+        self._loading_settings = False
 
     def _sync_region_ui(self):
         region = self.cfg.get("capture_region")
@@ -3467,6 +3472,21 @@ class MainWindow(FluentWindow):
 
         InfoBar.success("保存成功", "所有配置已生效", parent=self)
 
+    def on_home_page_config_changed(self, _=None):
+        if self._loading_settings:
+            return
+
+        source = get_seg_key(self.home_page.source_seg, "window")
+        self.cfg["capture_source"] = source
+        self.cfg["target_hwnd"] = self.home_page.combo.currentData() if source == "window" else 0
+        self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
+        save_config(self.cfg)
+
+        overlay = getattr(self, "overlay", None)
+        if overlay:
+            overlay.cfg = self.cfg
+            overlay.apply_mode()
+
     # ── 窗口刷新 ──
 
     def refresh_windows(self):
@@ -3536,6 +3556,10 @@ class MainWindow(FluentWindow):
         self._sync_region_ui()
         if self.overlay:
             self.overlay.cfg = self.cfg
+            self.overlay.apply_mode()
+            if self.overlay.text_overlay and isValid(self.overlay.text_overlay):
+                self.overlay.text_overlay.close()
+                self.overlay.text_overlay = None
 
     def clear_region(self):
         self.cfg["capture_region"] = None
@@ -3543,6 +3567,10 @@ class MainWindow(FluentWindow):
         self._sync_region_ui()
         if self.overlay:
             self.overlay.cfg = self.cfg
+            self.overlay.apply_mode()
+            if self.overlay.text_overlay and isValid(self.overlay.text_overlay):
+                self.overlay.text_overlay.close()
+                self.overlay.text_overlay = None
 
 
 # ══════════════════════════════════════════════
