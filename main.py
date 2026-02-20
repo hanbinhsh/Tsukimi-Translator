@@ -619,7 +619,7 @@ class StabilityMonitorThread(QThread):
             runtime_cfg = dict(self.cfg)
             runtime_cfg["stability_settings"] = algo_cfg if isinstance(algo_cfg, dict) else {}
             checker = mod.StabilityChecker(runtime_cfg)
-            detect_interval = float(runtime_cfg["stability_settings"].get("detect_interval", 1.0) or 1.0)
+            detect_interval = float(runtime_cfg["stability_settings"].get("detect_interval", 1.0) or 0.0)
             detect_interval = max(0.0, detect_interval)
             if log_debug:
                 print(f"[stability] 启动算法={file_name} interval={detect_interval}s")
@@ -1130,7 +1130,7 @@ class SubtitleOverlay(QWidget):
         self.stop_stability_monitor()
         key_name = self.cfg.get("trigger_key", "Left Click")
         if key_name == "无":
-            delay_s = max(0.1, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
+            delay_s = max(0.0, float(self.cfg.get("capture_delay_seconds", 1.5) or 0.0))
             self.timer.start(int(delay_s * 1000))
             return
         if key_name in ("Left Click", "Right Click"):
@@ -1181,7 +1181,7 @@ class SubtitleOverlay(QWidget):
             return
         self.last_trigger_time = time.time()
         if not self._is_smart_delay_enabled():
-            delay_s = max(0.0, float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
+            delay_s = max(0.0, float(self.cfg.get("capture_delay_seconds", 1.5) or 0.0))
             if delay_s <= 0:
                 self.input_signal.triggered.emit()
             else:
@@ -3206,7 +3206,7 @@ class MainWindow(FluentWindow):
         if delay_mode not in ("fixed", "smart"):
             delay_mode = "fixed"
         s.delay_mode_seg.setCurrentItem(delay_mode)
-        s.delay_time_spin.setValue(float(self.cfg.get("capture_delay_seconds", 1.5) or 1.5))
+        s.delay_time_spin.setValue(float(self.cfg.get("capture_delay_seconds", 1.5) or 0.0))
         algo = self.cfg.get("stability_algorithm", "none")
         for i in range(s.smart_algo_combo.count()):
             if s.smart_algo_combo.itemData(i) == algo:
