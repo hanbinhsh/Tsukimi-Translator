@@ -2,12 +2,13 @@ import sys
 import os
 import time
 import re
+import threading
 import copy
 import json
 import importlib.util
 from pathlib import Path
 import requests
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QBuffer, QIODevice, QObject, QPoint, QRect, QUrl, Slot
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout,
                                 QLabel, QLayout, QPushButton, QFrame,
                                 QSizePolicy, QScrollArea, QTableWidget, QTableWidgetItem,
@@ -973,6 +974,8 @@ class RegionSelector(QWidget):
 # ══════════════════════════════════════════════
 
 class SubtitleOverlay(QWidget):
+    run_on_gui = Signal(object)
+
     def __init__(self, config):
         super().__init__()
         self.cfg = config
@@ -993,6 +996,7 @@ class SubtitleOverlay(QWidget):
         self._stability_debug_index = 0
         self.status_signal = OverlayStatusSignal()
         self.stability_thread = None
+        self.run_on_gui.connect(self._execute_gui_callable)
 
         self.update_window_flags()
 
@@ -1326,6 +1330,38 @@ class SubtitleOverlay(QWidget):
             self.text_overlay = None
             QApplication.processEvents()
 
+    @Slot(object)
+    def _execute_gui_callable(self, func):
+        func()
+
+    def _run_in_gui_thread_blocking(self, func):
+        app = QApplication.instance()
+        if not app or QThread.currentThread() == app.thread():
+            return func()
+
+        done = threading.Event()
+        result = {}
+
+        def wrapped():
+            try:
+                result["value"] = func()
+            except Exception as e:
+                result["error"] = e
+            finally:
+                done.set()
+
+        self.run_on_gui.emit(wrapped)
+        done.wait()
+        if "error" in result:
+            raise result["error"]
+        return result.get("value")
+
+    def _set_capture_visibility(self, visible: bool, text_overlay_visible: bool):
+        self.setVisible(visible)
+        if text_overlay_visible and self.text_overlay and isValid(self.text_overlay):
+            self.text_overlay.setVisible(visible)
+        QApplication.processEvents()
+
     def capture_image_bytes(self, for_stability=False):
         source = self.cfg.get("capture_source", "window")
         import mss
@@ -1338,6 +1374,15 @@ class SubtitleOverlay(QWidget):
         text_overlay_visible = bool(
             self.text_overlay and isValid(self.text_overlay) and self.text_overlay.isVisible()
         )
+<<<<<<< codex/fix-stability-algorithm-crash-issue-82qqce
+        if should_hide and was_visible:
+            if in_gui_thread:
+                self._set_capture_visibility(False, text_overlay_visible)
+            else:
+                self._run_in_gui_thread_blocking(
+                    lambda: self._set_capture_visibility(False, text_overlay_visible)
+                )
+=======
         # 稳定性检测运行在线程里时，禁止操作 QWidget，避免跨线程调用导致崩溃。
         allow_ui_ops = in_gui_thread
         if should_hide and was_visible and allow_ui_ops:
@@ -1345,6 +1390,7 @@ class SubtitleOverlay(QWidget):
             if text_overlay_visible:
                 self.text_overlay.setVisible(False)
             QApplication.processEvents()
+>>>>>>> main
             time.sleep(0.02)
 
         try:
@@ -1407,10 +1453,20 @@ class SubtitleOverlay(QWidget):
                     f.write(st_bytes)
             return img_bytes
         finally:
+<<<<<<< codex/fix-stability-algorithm-crash-issue-82qqce
+            if should_hide and was_visible:
+                if in_gui_thread:
+                    self._set_capture_visibility(True, text_overlay_visible)
+                else:
+                    self._run_in_gui_thread_blocking(
+                        lambda: self._set_capture_visibility(True, text_overlay_visible)
+                    )
+=======
             if should_hide and was_visible and allow_ui_ops:
                 self.setVisible(True)
                 if text_overlay_visible and self.text_overlay and isValid(self.text_overlay):
                     self.text_overlay.setVisible(True)
+>>>>>>> main
 
     def capture_task(self):
         if self.is_processing:
