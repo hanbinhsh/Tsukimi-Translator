@@ -218,6 +218,7 @@ def apply_rule_groups(text: str, groups: list[dict]) -> str:
 
 class InputSignal(QObject):
     triggered = Signal()
+    delayed_triggered = Signal(int)
 
 
 class OverlayStatusSignal(QObject):
@@ -984,6 +985,7 @@ class SubtitleOverlay(QWidget):
         self.key_listener   = None
         self.input_signal   = InputSignal()
         self.input_signal.triggered.connect(self.capture_task)
+        self.input_signal.delayed_triggered.connect(self.on_delayed_trigger)
         self.last_trigger_time = 0
         self.text_overlay: TextOverlayWindow | None = None  # 贴字翻译浮层
         self._latest_ocr_image_size: tuple[int, int] | None = None
@@ -1183,7 +1185,7 @@ class SubtitleOverlay(QWidget):
             if delay_s <= 0:
                 self.input_signal.triggered.emit()
             else:
-                QTimer.singleShot(int(delay_s * 1000), self.input_signal.triggered.emit)
+                self.input_signal.delayed_triggered.emit(int(delay_s * 1000))
             return
 
         if self.cfg.get("stability_algorithm", "none") == "none":
@@ -1200,6 +1202,9 @@ class SubtitleOverlay(QWidget):
     def on_stability_ready(self):
         self.set_status("等待截图")
         QTimer.singleShot(0, self.input_signal.triggered.emit)
+
+    def on_delayed_trigger(self, ms: int):
+        QTimer.singleShot(max(0, int(ms)), self.input_signal.triggered.emit)
 
     # ── 布局热更新 ──
 
@@ -1327,9 +1332,14 @@ class SubtitleOverlay(QWidget):
         from PySide6.QtGui import QImage, QPixmap
 
         was_visible = self.isVisible()
-        should_hide = self.cfg.get("auto_hide", True) and not for_stability
+        should_hide = self.cfg.get("auto_hide", True)
+        text_overlay_visible = bool(
+            self.text_overlay and isValid(self.text_overlay) and self.text_overlay.isVisible()
+        )
         if should_hide and was_visible:
             self.setVisible(False)
+            if text_overlay_visible:
+                self.text_overlay.setVisible(False)
             QApplication.processEvents()
             time.sleep(0.02)
 
@@ -1396,6 +1406,8 @@ class SubtitleOverlay(QWidget):
         finally:
             if should_hide and was_visible:
                 self.setVisible(True)
+                if text_overlay_visible and self.text_overlay and isValid(self.text_overlay):
+                    self.text_overlay.setVisible(True)
 
     def capture_task(self):
         if self.is_processing:
