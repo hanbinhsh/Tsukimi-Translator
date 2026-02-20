@@ -3482,10 +3482,16 @@ class MainWindow(FluentWindow):
         self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
         save_config(self.cfg)
 
+<<<<<<< codex/save-settings-immediately-on-homepage-2w17vd
         overlay = getattr(self, "overlay", None)
         if overlay:
             overlay.cfg = self.cfg
             overlay.apply_mode()
+=======
+        if self.overlay:
+            self.overlay.cfg = self.cfg
+            self.overlay.apply_mode()
+>>>>>>> main
 
     # ── 窗口刷新 ──
 
