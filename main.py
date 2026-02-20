@@ -3131,6 +3131,7 @@ class MainWindow(FluentWindow):
 
         self.load_settings()
         self._sync_region_ui()
+        self.overlay = None
 
         # 恢复上次选择的屏幕
         saved_name = self.cfg.get("capture_screen_name", "")
@@ -3149,7 +3150,6 @@ class MainWindow(FluentWindow):
         self.stackedWidget.currentChanged.connect(self._on_page_changed)
 
         self.refresh_windows()
-        self.overlay = None
         self._layout_top_action_bar()
         self._refresh_start_button_style()
         self._on_page_changed(self.stackedWidget.currentIndex())
@@ -3482,9 +3482,16 @@ class MainWindow(FluentWindow):
         self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
         save_config(self.cfg)
 
+<<<<<<< codex/save-settings-immediately-on-homepage-2w17vd
+        overlay = getattr(self, "overlay", None)
+        if overlay:
+            overlay.cfg = self.cfg
+            overlay.apply_mode()
+=======
         if self.overlay:
             self.overlay.cfg = self.cfg
             self.overlay.apply_mode()
+>>>>>>> main
 
     # ── 窗口刷新 ──
 
