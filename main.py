@@ -1555,7 +1555,7 @@ class SettingInterface(ScrollArea):
         self.mode_seg.addItem("trigger",  "按键触发")
         self.mode_card.addWidget(self.mode_seg)
 
-        self.trigger_card = CustomSettingCard(FIF.TAG, "触发按键", "保留原逻辑，并支持无/自定义", self.mode_group)
+        self.trigger_card = CustomSettingCard(FIF.TAG, "触发按键", "在按下按键后，开始翻译流程", self.mode_group)
         self.trigger_combo = ComboBox()
         self.trigger_combo.addItems(["Left Click", "Right Click", "Space", "Enter", "无", "自定义按键"])
         self.trigger_card.addWidget(self.trigger_combo)
