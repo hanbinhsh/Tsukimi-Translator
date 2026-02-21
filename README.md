@@ -1,8 +1,33 @@
 # Tsukimi Translator
 
-一个基于 **PySide6 + qfluentwidgets + Ollama** 的桌面截图翻译工具，适用于游戏、生肉漫画、视频字幕等场景。
+一个基于 **PySide6 + qfluentwidgets + Ollama** 的桌面截图翻译工具，适用于游戏、生肉漫画等场景。
 
 它通过「截图 → OCR → 翻译 → 悬浮显示」流水线，将屏幕中的文本快速转成目标语言，并支持贴字（Overlay）模式、规则处理与流式输出。
+
+耗时：
+
+普通模式（glm-ocr + qwen3-vl:2b-instruct）（4k/3080ti-laptop-16G）: 2~4s
+
+贴字模式（deepseek-ocr + qwen3-vl:2b-instruct）（4k/3080ti-laptop-16G）: 10~30s
+
+解压即用 [点我下载](https://github.com/hanbinhsh/Tsukimi-Translator/releases) 解压后双击.exe即可（请确保你有API或者本地已经部署了Ollama以及对应模型）
+
+<img width="1626" height="1626" alt="NZ8`X$CZ4S9`6HXOMBHEG$R" src="https://github.com/user-attachments/assets/6f1dfb41-c353-4a94-a255-0c9989e1c990" />
+
+![1db262402dc88f359dba1b80e1c89c53](https://github.com/user-attachments/assets/bf97c851-279d-4b9c-98aa-6799130d3f25)
+
+![c7a59069b9fc992d6b55d8be9419ba56](https://github.com/user-attachments/assets/a57aef8f-4adf-4863-bd36-7a435525061d)
+
+<img width="1420" height="1435" alt="11dfaa347ffb793ab0983dcab6c875cd" src="https://github.com/user-attachments/assets/86052353-9441-4349-836d-d45ecc342b61" />
+
+<img width="3840" height="2160" alt="0RVEK2LEAE J`DU47)71LF1" src="https://github.com/user-attachments/assets/789ae526-9941-4292-bd90-9c7d308b1772" />
+
+---
+
+## 免责声明
+
+### 本软件（不使用外部API时）并不会将你的任何数据上传至互联网，由使用外部API造成如隐私泄露等一切后果和开发者无关
+### 有一些在线游戏可能会启用反作弊系统，使用本软件导致触发反作弊系统导致的一切后果和开发者无关
 
 ---
 
@@ -15,8 +40,7 @@
 - [应用内配置说明](#应用内配置说明)
 - [项目结构](#项目结构)
 - [常见问题（FAQ）](#常见问题faq)
-- [图片占位符（你可自行替换）](#图片占位符你可自行替换)
-- [版本与作者](#版本与作者)
+- [作者](#作者)
 
 ---
 
@@ -35,7 +59,7 @@
   - OCR 后规则组与输出规则组，支持正则/大小写/整词匹配。
 - **可视化配置**
   - 模型、API、Key、上下文长度、颜色、透明度等均可在 UI 配置。
-- **调试能力**
+- **调试能力（在关于页依次按下ICE后解锁）**
   - 支持 OCR 原始日志、文本日志、调试截图开关（适合排错）。
 
 ---
@@ -107,15 +131,17 @@ ollama list
 - **OCR 模型**：负责“看图读字”（支持图片输入）
 - **LLM 模型**：负责“翻译文本”
 
-示例（请按你机器性能替换模型）：
+示例：
 
 ```bash
 ollama pull glm-ocr:latest
+ollama pull deepseek-ocr
 ollama pull qwen3-vl:2b-instruct
 ```
 
 > 说明：
 > - 默认配置中 OCR 模型是 `glm-ocr:latest`。
+> - 贴字模型建议选用 `deepseek-ocr`目前只适配了这一种模型。
 > - 默认配置中 LLM 模型是 `qwen3-vl:2b-instruct`。
 > - 若你只想纯文本翻译，可将 LLM 换成普通文本模型。
 
@@ -209,6 +235,7 @@ ollama pull qwen3-vl:2b-instruct
 - OCR 误识别符号替换
 - 合并多余空行
 - 去掉特定前后缀
+- 游戏人名处理
 
 ---
 
@@ -248,35 +275,8 @@ ollama pull qwen3-vl:2b-instruct
 
 ---
 
-## 图片占位符（你可自行替换）
+## 作者
 
-> 下面是 README 图片占位写法，你后续只需把路径替换为自己的截图文件即可。
-
-```markdown
-![主界面截图（占位）](docs/images/main-ui.png)
-![配置页面截图（占位）](docs/images/settings.png)
-![贴字模式效果图（占位）](docs/images/overlay-mode.png)
-![规则配置页面（占位）](docs/images/rules.png)
-```
-
-你也可以在仓库中先建立目录：
-
-```bash
-mkdir -p docs/images
-```
-
-然后把图片放进去并更新路径。
-
----
-
-## 版本与作者
-
-- 当前版本：`0.1`
 - 作者：IceRinne aka. hanbinhsh
 
-如果你准备开源给更多用户，建议后续补充：
-
-- License
-- Changelog
-- 常见模型推荐表（按显存分档）
-- 性能对比与延迟统计
+- 若有任何问题或建议请提供Issue反馈
