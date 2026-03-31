@@ -47,3 +47,20 @@ def get_window_rect(hwnd):
     h = rect.bottom - rect.top
     
     return x, y, w, h
+
+
+def get_window_capture_rect(hwnd, exclude_title_bar: bool = True):
+    """获取用于截图的窗口区域；可选仅返回客户区以排除标题栏和边框。"""
+    if exclude_title_bar:
+        try:
+            left, top, right, bottom = win32gui.GetClientRect(hwnd)
+            if right > left and bottom > top:
+                screen_left, screen_top = win32gui.ClientToScreen(hwnd, (left, top))
+                screen_right, screen_bottom = win32gui.ClientToScreen(hwnd, (right, bottom))
+                width = screen_right - screen_left
+                height = screen_bottom - screen_top
+                if width > 0 and height > 0:
+                    return screen_left, screen_top, width, height
+        except Exception:
+            pass
+    return get_window_rect(hwnd)

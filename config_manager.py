@@ -19,7 +19,9 @@ DEFAULT_CONFIG = {
     "ocr_image_format": "PNG",   # OCR 上传图片编码：PNG(无损) / JPEG
     "ocr_image_quality": 95,       # JPEG 编码质量（仅 JPEG 生效）
     "use_ocr": True,
+    "ocr_thinking": False,
     "use_llm": True,
+    "llm_thinking": False,
     "use_stream": False,            # 是否流式输出
     "llm_prompt": "You are a translator. Please help me translate the following English text into Chinese. You should only tell me the translation result without any additional explanations.",
 
@@ -37,6 +39,7 @@ DEFAULT_CONFIG = {
     "stability_algorithm": "none",
     "stability_algorithm_configs": {},
     "auto_hide": True,
+    "exclude_title_bar": True,      # 窗口截图时仅截取客户区，不包含标题栏和边框
 
     # --- 窗口行为 ---
     "always_on_top": True,

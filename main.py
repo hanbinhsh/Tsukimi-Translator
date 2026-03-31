@@ -25,7 +25,7 @@ from qfluentwidgets import (FluentWindow, SubtitleLabel, ComboBox, PushButton,
 from qfluentwidgets import FluentIcon as FIF
 from pynput import mouse, keyboard
 
-from win_utils import get_active_windows, get_window_rect
+from win_utils import get_active_windows, get_window_capture_rect
 from ollama_worker import OllamaTranslator
 from config_manager import load_config, save_config
 
@@ -519,7 +519,7 @@ class TranslationThread(QThread):
         }
 
         # ══ 贴字翻译模式 ══
-        if self.config.get("use_overlay_ocr", False):
+        if self.config.get("use_ocr", True) and self.config.get("use_overlay_ocr", False):
             try:
                 ocr_start = time.perf_counter()
                 items, overlay_raw = worker.run_ocr_with_coords(self.image_bytes, return_raw=True)
@@ -985,6 +985,7 @@ class RegionSelector(QWidget):
 
 class SubtitleOverlay(QWidget):
     run_on_gui = Signal(object)
+    closed = Signal()
 
     def __init__(self, config):
         super().__init__()
@@ -1139,6 +1140,17 @@ class SubtitleOverlay(QWidget):
 
     def set_status(self, text: str):
         self.status_signal.changed.emit(text)
+
+    def _is_ocr_stage_enabled(self) -> bool:
+        return bool(self.cfg.get("use_ocr", True))
+
+    def _is_overlay_ocr_enabled(self) -> bool:
+        return self._is_ocr_stage_enabled() and bool(self.cfg.get("use_overlay_ocr", False))
+
+    def _update_processing_state(self, status: str = "等待截图"):
+        self.is_processing = False
+        self._request_locked = False
+        self.set_status(status)
 
     def apply_mode(self):
         self.timer.stop()
@@ -1422,7 +1434,10 @@ class SubtitleOverlay(QWidget):
                 hwnd = self.cfg.get("target_hwnd", 0)
                 if not hwnd:
                     return None
-                x, y, w, h = get_window_rect(hwnd)
+                x, y, w, h = get_window_capture_rect(
+                    hwnd,
+                    exclude_title_bar=bool(self.cfg.get("exclude_title_bar", True))
+                )
                 mss_rect = {"left": x, "top": y, "width": w, "height": h}
 
             with mss.mss() as sct:
@@ -1484,19 +1499,24 @@ class SubtitleOverlay(QWidget):
 
         step1_start = time.perf_counter()
         try:
-            if self.cfg.get("use_overlay_ocr", False):
+            if self._is_overlay_ocr_enabled():
                 self._reset_text_overlay_before_capture()
 
             img_bytes = self.capture_image_bytes()
             if not img_bytes:
-                self._request_locked = False
+                self._update_processing_state()
                 return
 
             self.step1_duration = time.perf_counter() - step1_start
             self.is_processing = True
-            self.set_status("OCR识别中")
+            if self._is_overlay_ocr_enabled() or self._is_ocr_stage_enabled():
+                self.set_status("OCR识别中")
+            elif self.cfg.get("use_llm", True):
+                self.set_status("LLM处理中")
+            else:
+                self.set_status("处理中")
 
-            if self.cfg.get("use_overlay_ocr", False):
+            if self._is_overlay_ocr_enabled():
                 region = self.cfg.get("capture_region")
                 if region and (self.text_overlay is None or not isValid(self.text_overlay)):
                     screen = self._get_capture_screen()
@@ -1512,9 +1532,7 @@ class SubtitleOverlay(QWidget):
 
         except Exception as e:
             print(f"[capture_task error] {e}")
-            self.is_processing = False
-            self._request_locked = False
-            self.set_status("等待截图")
+            self._update_processing_state()
 
     # ── 翻译结果回调 ──
 
@@ -1562,38 +1580,39 @@ class SubtitleOverlay(QWidget):
             self._adjust_size()
 
     def on_translated(self, text: str, ai_duration: float, debug_info: object):
-        info = debug_info if isinstance(debug_info, dict) else {}
-        ocr_duration = float(info.get("ocr_duration", 0.0) or 0.0)
-        llm_duration = float(info.get("llm_duration", 0.0) or 0.0)
-        model_text = str(info.get("model_text", "") or text or "")
-        total = self.step1_duration + ai_duration
+        try:
+            info = debug_info if isinstance(debug_info, dict) else {}
+            ocr_duration = float(info.get("ocr_duration", 0.0) or 0.0)
+            llm_duration = float(info.get("llm_duration", 0.0) or 0.0)
+            model_text = str(info.get("model_text", "") or text or "")
+            total = self.step1_duration + ai_duration
 
-        log_lines = [
-            "=" * 40,
-            f"时戳: {time.strftime('%H:%M:%S')}",
-            f"截图: {self.step1_duration:.3f}s  |  OCR: {ocr_duration:.3f}s  |  LLM: {llm_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s",
-        ]
-        if self.cfg.get("log_ocr_raw", False):
-            log_lines.append(f"OCR 原始内容:\n{info.get('ocr_raw', '')}")
-        if self.cfg.get("log_ocr_text", False):
-            log_lines.append(f"OCR 输出全文:\n{info.get('ocr_text', '')}")
-        log_lines.append(f"模型输出全文:\n{model_text}")
-        log_lines.append("=" * 40)
-        print("\n".join(log_lines))
+            log_lines = [
+                "=" * 40,
+                f"时戳: {time.strftime('%H:%M:%S')}",
+                f"截图: {self.step1_duration:.3f}s  |  OCR: {ocr_duration:.3f}s  |  LLM: {llm_duration:.3f}s  |  AI: {ai_duration:.3f}s  |  总计: {total:.3f}s",
+            ]
+            if self.cfg.get("log_ocr_raw", False):
+                log_lines.append(f"OCR 原始内容:\n{info.get('ocr_raw', '')}")
+            if self.cfg.get("log_ocr_text", False):
+                log_lines.append(f"OCR 输出全文:\n{info.get('ocr_text', '')}")
+            log_lines.append(f"模型输出全文:\n{model_text}")
+            log_lines.append("=" * 40)
+            print("\n".join(log_lines))
 
-        processed = self._post_process_text(model_text)
-        if processed.strip():
-            self.trans_label.setText(processed)
-            if self.cfg.get("auto_copy"):
-                QGuiApplication.clipboard().setText(processed)
-            self._adjust_size()
-            if self._hide_until_next_success:
-                self._hide_until_next_success = False
-                self._set_text_overlay_visibility(True)
-
-        self.is_processing = False
-        self._request_locked = False
-        self.set_status("等待截图")
+            processed = self._post_process_text(model_text)
+            if processed.strip():
+                self.trans_label.setText(processed)
+                if self.cfg.get("auto_copy"):
+                    QGuiApplication.clipboard().setText(processed)
+                self._adjust_size()
+                if self._hide_until_next_success:
+                    self._hide_until_next_success = False
+                    self._set_text_overlay_visibility(True)
+        except Exception as e:
+            print(f"[on_translated error] {e}")
+        finally:
+            self._update_processing_state()
 
 
     @staticmethod
@@ -1636,7 +1655,10 @@ class SubtitleOverlay(QWidget):
             self.worker_thread.terminate()
         if self.text_overlay and isValid(self.text_overlay):
             self.text_overlay.close()
+            self.text_overlay = None
+        self.closed.emit()
         e.accept()
+        super().closeEvent(e)
 
 
 # ══════════════════════════════════════════════
@@ -1682,6 +1704,15 @@ class SettingInterface(ScrollArea):
         self.smart_algo_combo = ComboBox()
         self.smart_algo_card.addWidget(self.smart_algo_combo)
 
+        self.exclude_title_bar_card = CustomSettingCard(
+            FIF.VIEW,
+            "窗口截图排除标题栏",
+            "窗口模式下仅截取客户区，不包含标题栏和边框",
+            self.mode_group
+        )
+        self.sw_exclude_title_bar = SwitchButton()
+        self.exclude_title_bar_card.addWidget(self.sw_exclude_title_bar)
+
         self.smart_config_controls = {}
         self.smart_config_cards = []
         self.smart_config_cache = {}
@@ -1691,6 +1722,7 @@ class SettingInterface(ScrollArea):
         self.mode_group.addSettingCard(self.delay_mode_card)
         self.mode_group.addSettingCard(self.delay_time_card)
         self.mode_group.addSettingCard(self.smart_algo_card)
+        self.mode_group.addSettingCard(self.exclude_title_bar_card)
         self.layout.addWidget(self.mode_group)
 
         # ── 窗口行为 ──
@@ -1745,14 +1777,6 @@ class SettingInterface(ScrollArea):
         self.sw_stream = SwitchButton()
         self.stream_card.addWidget(self.sw_stream)
 
-        self.ocr_sw_card = CustomSettingCard(FIF.CAMERA, "启用 OCR 文字提取", "关闭则直接发送截图给 LLM", self.perf_group)
-        self.sw_ocr = SwitchButton()
-        self.ocr_sw_card.addWidget(self.sw_ocr)
-
-        self.llm_sw_card = CustomSettingCard(FIF.EDIT, "启用智能翻译润色", "关闭则仅显示原始 OCR 内容", self.perf_group)
-        self.sw_llm = SwitchButton()
-        self.llm_sw_card.addWidget(self.sw_llm)
-
         self.copy_sw_card = CustomSettingCard(FIF.COPY, "自动同步剪贴板", "翻译结果自动复制", self.perf_group)
         self.sw_copy = SwitchButton()
         self.copy_sw_card.addWidget(self.sw_copy)
@@ -1775,8 +1799,7 @@ class SettingInterface(ScrollArea):
         self.sw_block_retrigger = SwitchButton()
         self.block_retrigger_card.addWidget(self.sw_block_retrigger)
 
-        for card in (self.scale_card, self.stream_card, self.ocr_sw_card,
-                     self.llm_sw_card, self.copy_sw_card, self.remove_blank_card,
+        for card in (self.scale_card, self.stream_card, self.copy_sw_card, self.remove_blank_card,
                      self.block_retrigger_card):
             self.perf_group.addSettingCard(card)
         self.layout.addWidget(self.perf_group)
@@ -2031,6 +2054,14 @@ class AISettingInterface(ScrollArea):
         self.layout.setSpacing(15)
 
         self.ocr_group = SettingCardGroup("OCR 配置", self.view)
+        self.ocr_sw_card = CustomSettingCard(FIF.CAMERA, "启用 OCR 文字提取", "关闭则直接发送截图给 LLM", self.ocr_group)
+        self.sw_ocr = SwitchButton()
+        self.ocr_sw_card.addWidget(self.sw_ocr)
+
+        self.ocr_thinking_card = CustomSettingCard(FIF.ROBOT, "OCR 思考模式", "向 OCR 请求附带 think 开关", self.ocr_group)
+        self.sw_ocr_thinking = SwitchButton()
+        self.ocr_thinking_card.addWidget(self.sw_ocr_thinking)
+
         self.ocr_model_card = CustomSettingCard(FIF.CODE, "OCR 识别模型", "视觉模型，用于提取图片文字", self.ocr_group)
         self.ocr_model_edit = LineEdit()
         self.ocr_model_card.addWidget(self.ocr_model_edit)
@@ -2060,7 +2091,19 @@ class AISettingInterface(ScrollArea):
         )
         self.overlay_ocr_prompt_edit = self.overlay_ocr_prompt_card.editor
 
+        self.ocr_dependent_cards = [
+            self.ocr_thinking_card,
+            self.ocr_model_card,
+            self.ocr_api_card,
+            self.ocr_key_card,
+            self.ocr_ctx_card,
+            self.ocr_prompt_card,
+            self.overlay_ocr_prompt_card,
+        ]
+
         for card in (
+            self.ocr_sw_card,
+            self.ocr_thinking_card,
             self.ocr_model_card,
             self.ocr_api_card,
             self.ocr_key_card,
@@ -2072,6 +2115,14 @@ class AISettingInterface(ScrollArea):
         self.layout.addWidget(self.ocr_group)
 
         self.llm_group = SettingCardGroup("LLM 配置", self.view)
+        self.llm_sw_card = CustomSettingCard(FIF.EDIT, "启用智能翻译润色", "关闭则仅显示原始 OCR 内容", self.llm_group)
+        self.sw_llm = SwitchButton()
+        self.llm_sw_card.addWidget(self.sw_llm)
+
+        self.llm_thinking_card = CustomSettingCard(FIF.ROBOT, "LLM 思考模式", "向 LLM 请求附带 think 开关", self.llm_group)
+        self.sw_llm_thinking = SwitchButton()
+        self.llm_thinking_card.addWidget(self.sw_llm_thinking)
+
         self.llm_model_card = CustomSettingCard(FIF.CHAT, "LLM 翻译模型", "语言模型，用于文本润色", self.llm_group)
         self.llm_model_edit = LineEdit()
         self.llm_model_card.addWidget(self.llm_model_edit)
@@ -2096,7 +2147,24 @@ class AISettingInterface(ScrollArea):
         )
         self.llm_prompt_edit = self.llm_prompt_card.editor
 
-        for card in (self.llm_model_card, self.llm_api_card, self.llm_key_card, self.llm_ctx_card, self.llm_prompt_card):
+        self.llm_dependent_cards = [
+            self.llm_thinking_card,
+            self.llm_model_card,
+            self.llm_api_card,
+            self.llm_key_card,
+            self.llm_ctx_card,
+            self.llm_prompt_card,
+        ]
+
+        for card in (
+            self.llm_sw_card,
+            self.llm_thinking_card,
+            self.llm_model_card,
+            self.llm_api_card,
+            self.llm_key_card,
+            self.llm_ctx_card,
+            self.llm_prompt_card,
+        ):
             self.llm_group.addSettingCard(card)
         self.layout.addWidget(self.llm_group)
 
@@ -2104,6 +2172,22 @@ class AISettingInterface(ScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
         self.setStyleSheet("background: transparent; border: none;")
+
+        self.sw_ocr.checkedChanged.connect(self._sync_ocr_controls)
+        self.sw_llm.checkedChanged.connect(self._sync_llm_controls)
+        self._sync_ocr_controls(self.sw_ocr.isChecked())
+        self._sync_llm_controls(self.sw_llm.isChecked())
+
+    @staticmethod
+    def _set_cards_enabled(cards: list, enabled: bool):
+        for card in cards:
+            card.setEnabled(enabled)
+
+    def _sync_ocr_controls(self, checked: bool):
+        self._set_cards_enabled(self.ocr_dependent_cards, checked)
+
+    def _sync_llm_controls(self, checked: bool):
+        self._set_cards_enabled(self.llm_dependent_cards, checked)
 
 
 class OverlaySettingInterface(ScrollArea):
@@ -3299,6 +3383,7 @@ class MainWindow(FluentWindow):
             delay_mode = "fixed"
         s.delay_mode_seg.setCurrentItem(delay_mode)
         s.delay_time_spin.setValue(float(self.cfg.get("capture_delay_seconds", 1.5) or 0.0))
+        s.sw_exclude_title_bar.setChecked(self.cfg.get("exclude_title_bar", True))
         algo = self.cfg.get("stability_algorithm", "none")
         for i in range(s.smart_algo_combo.count()):
             if s.smart_algo_combo.itemData(i) == algo:
@@ -3320,15 +3405,19 @@ class MainWindow(FluentWindow):
         self.ai_page.overlay_ocr_prompt_edit.setText(
             self.cfg.get("overlay_ocr_prompt", "\n<|grounding|>OCR the image.")
         )
+        self.ai_page.sw_ocr_thinking.setChecked(self.cfg.get("ocr_thinking", False))
         self.ai_page.llm_model_edit.setText(self.cfg.get("llm_model", ""))
         self.ai_page.llm_api_edit.setText(self.cfg.get("llm_api", "http://localhost:11434/api/generate"))
         self.ai_page.llm_key_edit.setText(self.cfg.get("llm_key", ""))
         self.ai_page.llm_ctx_spin.setValue(self.cfg.get("llm_context_length", 8192))
         self.ai_page.llm_prompt_edit.setText(self.cfg.get("llm_prompt", ""))
+        self.ai_page.sw_llm_thinking.setChecked(self.cfg.get("llm_thinking", False))
+        self.ai_page.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
+        self.ai_page.sw_llm.setChecked(self.cfg.get("use_llm", True))
+        self.ai_page._sync_ocr_controls(self.ai_page.sw_ocr.isChecked())
+        self.ai_page._sync_llm_controls(self.ai_page.sw_llm.isChecked())
         s.scale_spin.setValue(self.cfg.get("scale_factor", 0.5))
         s.sw_stream.setChecked(self.cfg.get("use_stream", False))
-        s.sw_ocr.setChecked(self.cfg.get("use_ocr", True))
-        s.sw_llm.setChecked(self.cfg.get("use_llm", True))
         s.sw_copy.setChecked(self.cfg.get("auto_copy", False))
         s.sw_remove_blank.setChecked(self.cfg.get("remove_blank_lines", False))
         s.sw_block_retrigger.setChecked(self.cfg.get("block_retrigger_before_result", True))
@@ -3406,6 +3495,7 @@ class MainWindow(FluentWindow):
             "capture_source":      get_seg_key(self.home_page.source_seg, "window"),
             "grow_direction":      get_seg_key(s.grow_seg, "up"),
             "capture_delay_seconds": s.delay_time_spin.value(),
+            "exclude_title_bar":  s.sw_exclude_title_bar.isChecked(),
             "trigger_key":         s.trigger_combo.currentText(),
             "custom_trigger_key":  s.custom_trigger_edit.text().strip(),
             "trigger_delay_mode":  get_seg_key(s.delay_mode_seg, "fixed"),
@@ -3429,14 +3519,16 @@ class MainWindow(FluentWindow):
             "ocr_context_length":  int(self.ai_page.ocr_ctx_spin.value()),
             "ocr_prompt":          self.ai_page.ocr_prompt_edit.toPlainText(),
             "overlay_ocr_prompt":  self.ai_page.overlay_ocr_prompt_edit.toPlainText(),
+            "ocr_thinking":        self.ai_page.sw_ocr_thinking.isChecked(),
             "llm_model":           self.ai_page.llm_model_edit.text(),
             "llm_api":             self.ai_page.llm_api_edit.text(),
             "llm_key":             self.ai_page.llm_key_edit.text(),
             "llm_context_length":  int(self.ai_page.llm_ctx_spin.value()),
+            "llm_thinking":        self.ai_page.sw_llm_thinking.isChecked(),
             "scale_factor":        s.scale_spin.value(),
             "use_stream":          s.sw_stream.isChecked(),
-            "use_ocr":             s.sw_ocr.isChecked(),
-            "use_llm":             s.sw_llm.isChecked(),
+            "use_ocr":             self.ai_page.sw_ocr.isChecked(),
+            "use_llm":             self.ai_page.sw_llm.isChecked(),
             "auto_copy":           s.sw_copy.isChecked(),
             "remove_blank_lines":  s.sw_remove_blank.isChecked(),
             "block_retrigger_before_result": s.sw_block_retrigger.isChecked(),
@@ -3465,7 +3557,7 @@ class MainWindow(FluentWindow):
             self.overlay.apply_mode()
             self.overlay.update_layout_settings()
             # 贴字模式关闭时，销毁浮层
-            if not self.cfg.get("use_overlay_ocr", False):
+            if not (self.cfg.get("use_overlay_ocr", False) and self.cfg.get("use_ocr", True)):
                 if self.overlay.text_overlay and isValid(self.overlay.text_overlay):
                     self.overlay.text_overlay.close()
                     self.overlay.text_overlay = None
@@ -3514,17 +3606,27 @@ class MainWindow(FluentWindow):
             self.cfg["capture_screen_name"] = self.home_page.screen_combo.currentData() or ""
             self.overlay = SubtitleOverlay(self.cfg)
             self.overlay.status_signal.changed.connect(self.on_overlay_status_changed)
+            self.overlay.closed.connect(self._on_overlay_closed)
             if self.cfg.get("window_visible", True):
                 self.overlay.show()
             self._refresh_start_button_style()
         else:
-            self.overlay.close()
+            overlay = self.overlay
             self.overlay = None
+            if overlay and isValid(overlay):
+                overlay.close()
             self.on_overlay_status_changed("等待截图")
             self._refresh_start_button_style()
 
     def on_overlay_status_changed(self, status: str):
         self.status_label.setText(f"状态：{status}")
+
+    def _on_overlay_closed(self):
+        sender = self.sender()
+        if sender is self.overlay or self.overlay is None or not isValid(self.overlay):
+            self.overlay = None
+            self.on_overlay_status_changed("等待截图")
+            self._refresh_start_button_style()
 
     # ── 区域框选 ──
 

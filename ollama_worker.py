@@ -21,6 +21,11 @@ class OllamaTranslator:
             headers["Authorization"] = f"Bearer {key}"
         return headers
 
+    def _thinking_for(self, service: str) -> bool:
+        if service == "ocr":
+            return bool(self.cfg.get("ocr_thinking", False))
+        return bool(self.cfg.get("llm_thinking", False))
+
     # ──────────────────────────────────────────
     # 独立方法（供 TranslationThread 分步调用）
     # ──────────────────────────────────────────
@@ -36,6 +41,7 @@ class OllamaTranslator:
             ),
             "images": [b64],
             "stream": False,
+            "think": self._thinking_for("ocr"),
         }
         ocr_ctx = int(self.cfg.get("ocr_context_length", 8192))
         if ocr_ctx > 0:
@@ -87,6 +93,7 @@ class OllamaTranslator:
             "model": self.cfg["llm_model"],
             "prompt": full_prompt,
             "stream": stream,
+            "think": self._thinking_for("llm"),
         }
         llm_ctx = int(self.cfg.get("llm_context_length", 8192))
         if llm_ctx > 0:
@@ -134,6 +141,7 @@ class OllamaTranslator:
             "prompt": self.cfg.get("overlay_ocr_prompt", "\\n<|grounding|>OCR the image."),
             "images": [b64],
             "stream": False,
+            "think": self._thinking_for("ocr"),
             "options": {
                 "temperature": 0,
             }
